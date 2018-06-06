@@ -22,6 +22,7 @@ import (
 
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider/aws"
+	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider/ali"
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider/azure"
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider/gce"
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider/kubemark"
@@ -41,6 +42,8 @@ var AvailableCloudProviders = []string{
 	gce.ProviderNameGCE,
 	gce.ProviderNameGKE,
 	kubemark.ProviderName,
+	// 阿里云
+	ali.ProviderName,
 }
 
 // DefaultCloudProvider is GCE.
@@ -87,6 +90,8 @@ func (b CloudProviderBuilder) Build(discoveryOpts cloudprovider.NodeGroupDiscove
 		return b.buildAzure(discoveryOpts, resourceLimiter)
 	case kubemark.ProviderName:
 		return b.buildKubemark(discoveryOpts, resourceLimiter)
+	case ali.ProviderName:
+		return b.buildAli(discoveryOpts, resourceLimiter)
 	case "":
 		// Ideally this would be an error, but several unit tests of the
 		// StaticAutoscaler depend on this behaviour.
@@ -140,6 +145,29 @@ func (b CloudProviderBuilder) buildAWS(do cloudprovider.NodeGroupDiscoveryOption
 	provider, err := aws.BuildAwsCloudProvider(manager, rl)
 	if err != nil {
 		glog.Fatalf("Failed to create AWS cloud provider: %v", err)
+	}
+	return provider
+}
+
+func (b CloudProviderBuilder) buildAli(do cloudprovider.NodeGroupDiscoveryOptions, rl *cloudprovider.ResourceLimiter) cloudprovider.CloudProvider {
+	var config io.ReadCloser
+	if b.cloudConfig != "" {
+		var err error
+		config, err = os.Open(b.cloudConfig)
+		if err != nil {
+			glog.Fatalf("Couldn't open cloud provider configuration %s: %#v", b.cloudConfig, err)
+		}
+		defer config.Close()
+	}
+
+	manager, err := ali.CreateAliManager(config, do)
+	if err != nil {
+		glog.Fatalf("Failed to create Ali Manager: %v", err)
+	}
+
+	provider, err := ali.BuildAliCloudProvider(manager, rl)
+	if err != nil {
+		glog.Fatalf("Failed to create Ali cloud provider: %v", err)
 	}
 	return provider
 }
