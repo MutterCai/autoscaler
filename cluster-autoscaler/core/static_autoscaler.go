@@ -35,6 +35,7 @@ import (
 	kube_record "k8s.io/client-go/tools/record"
 
 	"github.com/golang/glog"
+	"encoding/json"
 )
 
 const (
@@ -139,6 +140,19 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 	if typedErr != nil {
 		return typedErr
 	}
+
+	// TODO 因为阿里云的ProviderID是空的，这里需要做一个补充
+	for i:=0; i < len(allNodes); i++ {
+		if len(allNodes[i].Spec.ProviderID) == 0 {
+			allNodes[i].Spec.ProviderID = "cn-hongkong."+allNodes[i].Name
+		}
+	}
+	for i:=0; i < len(readyNodes); i++ {
+		if len(readyNodes[i].Spec.ProviderID) == 0 {
+			readyNodes[i].Spec.ProviderID = "cn-hongkong."+readyNodes[i].Name
+		}
+	}
+
 	// 检测判断集群是否为空
 	if a.actOnEmptyCluster(allNodes, readyNodes, currentTime) {
 		return nil
@@ -164,6 +178,8 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 	// 检测未能在k8s的master中注册的节点，删除掉
 	unregisteredNodes := a.clusterStateRegistry.GetUnregisteredNodes()
 	if len(unregisteredNodes) > 0 {
+		jdata, _ := json.Marshal(unregisteredNodes)
+		glog.Infof("未能在k8s的master中注册的节点: %s", jdata)
 		glog.V(1).Infof("%d unregistered nodes present", len(unregisteredNodes))
 		removedAny, err := removeOldUnregisteredNodes(unregisteredNodes, autoscalingContext, currentTime, autoscalingContext.LogRecorder)
 		// There was a problem with removing unregistered nodes. Retry in the next loop.
@@ -318,6 +334,20 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 		scaleDown.CleanUp(currentTime)
 		// 获得可能不需要的节点
 		potentiallyUnneeded := getPotentiallyUnneededNodes(autoscalingContext, allNodes)
+
+		// 手动删除k8s的node
+		//for _, node := range allNodes {
+		//	nodeGroup, err := autoscalingContext.CloudProvider.NodeGroupForNode(node)
+		//	if err != nil {
+		//		glog.Warningf("Error while checking node group for %s: %v", node.Name, err)
+		//		continue
+		//	}
+		//	if nodeGroup == nil || reflect.ValueOf(nodeGroup).IsNil() {
+		//		glog.V(4).Infof("Skipping %s - no node group config", node.Name)
+		//		// TODO 这里检测不到node group，可以定性node已经被缩放了；k8s需要delete node(master除外)
+		//		continue
+		//	}
+		//}
 		// 计算哪些node不需要，即所有的pod可以在其他地方调度，并相应地更新不必要的node
 		// 它还计算可重新安排Pod和node利用率级别的信息
 		// 时间戳是当前的时间戳。 计算仅针对由CA管理的node进行。

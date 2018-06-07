@@ -35,7 +35,6 @@ import (
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/ess"
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
 	"github.com/aws/aws-sdk-go/service/autoscaling"
-	"encoding/json"
 )
 
 const (
@@ -163,9 +162,16 @@ func (m *AliManager) getAsgs() []*asg {
 func (m *AliManager) SetAsgSize(asg *asg, size int) error {
 	// TODO 在循环开始应该将所有的规则清空最好。
 	// 创建规则、应用、删除规则
+	glog.V(4).Infof("创建伸缩规则...")
 	ruleResp, err := m.service.createAutoscalingRule(asg.ScalingGroupItem.ScalingGroupId, size)
 	if err != nil {
 		return err
+	}else{
+		// 如果规则创建没有错误，则退出的时候必须清理掉规则
+		defer func(scalingRuleId string) {
+			glog.V(4).Infof("删除伸缩规则...")
+			m.service.deleteAutoscalingRule(scalingRuleId)
+		}(ruleResp.ScalingRuleId)
 	}
 	glog.V(0).Infof("伸缩规则应用：Setting asg %s size to %d", asg.Name, size)
 	// scalingActivityId 暂时用不上
@@ -173,7 +179,6 @@ func (m *AliManager) SetAsgSize(asg *asg, size int) error {
 	if err != nil {
 		return err
 	}
-	m.service.deleteAutoscalingRule(ruleResp.ScalingRuleId)
 	return nil
 }
 
@@ -203,8 +208,6 @@ func (m *AliManager) DeleteInstances(instances []*AliInstanceRef) error {
 		// 以autoscalingGroupID划分组
 		instancesList[asg.ScalingGroupItem.ScalingGroupId] = append(instancesList[asg.ScalingGroupItem.ScalingGroupId], instance.Name)
 	}
-	jdata, _ := json.Marshal(instancesList)
-	glog.Infof("instancesList: %s", jdata)
 	// 删掉实例，并且缩容
 	for autoscalingGroupID, instances := range instancesList {
 		scalingActivityId, err := m.service.removeInstances(autoscalingGroupID, instances)

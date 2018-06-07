@@ -65,6 +65,9 @@ const (
 const (
 	// ScaleDownDisabledKey is the name of annotation marking node as not eligible for scale down.
 	ScaleDownDisabledKey = "cluster-autoscaler.kubernetes.io/scale-down-disabled"
+
+	// unready
+	AfterScaleDownUnready = "cluster-autoscaler.kubernetes.io/after-scale-down-unready"
 )
 
 const (
@@ -160,12 +163,17 @@ func (sd *ScaleDown) UpdateUnneededNodes(
 
 	currentlyUnneededNodes := make([]*apiv1.Node, 0)
 	// Only scheduled non expendable pods and pods waiting for lower priority pods preemption can prevent node delete.
+	// 只有拥有调度的非消耗性pods，pods等待较低优先级的pods抢占才能防止node被删除
+	// 过滤出非消耗性的pods
 	nonExpendablePods := FilterOutExpendablePods(pods, sd.context.ExpendablePodsPriorityCutoff)
+	// 获取一个pod列表，并将其列入映射中，其中key是nodeName，value是该节点的聚集信息。
+	// 等待较低优先级的pod抢占（使用NominatedNodeAnnotationKey注释）的pod也被添加到一个节点的pod列表中。
 	nodeNameToNodeInfo := scheduler_util.CreateNodeNameToInfoMap(nonExpendablePods, nodes)
 	utilizationMap := make(map[string]float64)
-
+	// 根据集群的node列表，更新unremovableNodes映射表
 	sd.updateUnremovableNodes(nodes)
 	// Filter out nodes that were recently checked
+	// 过滤掉最近检查过的节点(根据scaler down的unremovableNodes)
 	filteredNodesToCheck := make([]*apiv1.Node, 0)
 	for _, node := range nodesToCheck {
 		if unremovableTimestamp, found := sd.unremovableNodes[node.Name]; found {
@@ -183,18 +191,25 @@ func (sd *ScaleDown) UpdateUnneededNodes(
 
 	// Phase1 - look at the nodes utilization. Calculate the utilization
 	// only for the managed nodes.
+	// 阶段1 - 查看节点利用率。 仅计算受管节点的利用率。
 	for _, node := range filteredNodesToCheck {
 
 		// Skip nodes marked to be deleted, if they were marked recently.
 		// Old-time marked nodes are again eligible for deletion - something went wrong with them
 		// and they have not been deleted.
+		// 如果标记为最近标记，则跳过标记为要删除的节点。
+		// 以前标记的节点再次符合删除条件（出现问题并且未被删除）。
+
+		// 获取node被标记删除的时间
 		deleteTime, _ := deletetaint.GetToBeDeletedTime(node)
+		// 近期被删的，不进行处理，防止重复执行
 		if deleteTime != nil && (timestamp.Sub(*deleteTime) < MaxCloudProviderNodeDeletionTime || timestamp.Sub(*deleteTime) < MaxKubernetesEmptyNodeDeletionTime) {
 			glog.V(1).Infof("Skipping %s from delete considerations - the node is currently being deleted", node.Name)
 			continue
 		}
 
 		// Skip nodes marked with no scale down annotation
+		// 忽略被标记但是没有scale down的注释的node
 		if hasNoScaleDownAnnotation(node) {
 			glog.V(1).Infof("Skipping %s from delete consideration - the node is marked as no scale down", node.Name)
 			continue
@@ -205,6 +220,7 @@ func (sd *ScaleDown) UpdateUnneededNodes(
 			glog.Errorf("Node info for %s not found", node.Name)
 			continue
 		}
+		// 计算利用率
 		utilization, err := simulator.CalculateUtilization(node, nodeInfo)
 
 		if err != nil {
@@ -212,7 +228,7 @@ func (sd *ScaleDown) UpdateUnneededNodes(
 		}
 		glog.V(4).Infof("Node %s - utilization %f", node.Name, utilization)
 		utilizationMap[node.Name] = utilization
-
+		// 利用率大于阈值则忽略
 		if utilization >= sd.context.ScaleDownUtilizationThreshold {
 			glog.V(4).Infof("Node %s is not suitable for removal - utilization too big (%f)", node.Name, utilization)
 			continue
@@ -236,16 +252,18 @@ func (sd *ScaleDown) UpdateUnneededNodes(
 	}
 
 	// Phase2 - check which nodes can be probably removed using fast drain.
+	// 阶段2 - 检查哪些节点可能使用快速排除可能被删除。
 	currentCandidates, currentNonCandidates := sd.chooseCandidates(currentlyUnneededNonEmptyNodes)
 
 	// Look for nodes to remove in the current candidates
+	// 在当前candidates中寻找要删除的节点
 	nodesToRemove, unremovable, newHints, simulatorErr := simulator.FindNodesToRemove(
 		currentCandidates, nodes, nonExpendablePods, nil, sd.context.PredicateChecker,
 		len(currentCandidates), true, sd.podLocationHints, sd.usageTracker, timestamp, pdbs)
 	if simulatorErr != nil {
 		return sd.markSimulationError(simulatorErr, timestamp)
 	}
-
+	// 更新additionalCandidatesCount到当前的数量
 	additionalCandidatesCount := sd.context.ScaleDownNonEmptyCandidatesCount - len(nodesToRemove)
 	if additionalCandidatesCount > len(currentNonCandidates) {
 		additionalCandidatesCount = len(currentNonCandidates)
@@ -260,6 +278,7 @@ func (sd *ScaleDown) UpdateUnneededNodes(
 	}
 	if additionalCandidatesCount > 0 {
 		// Look for additional nodes to remove among the rest of nodes.
+		// 从其余nodes中删除additional nodes
 		glog.V(3).Infof("Finding additional %v candidates for scale down.", additionalCandidatesCount)
 		additionalNodesToRemove, additionalUnremovable, additionalNewHints, simulatorErr :=
 			simulator.FindNodesToRemove(currentNonCandidates[:additionalCandidatesPoolSize], nodes, nonExpendablePods, nil,
@@ -313,6 +332,7 @@ func (sd *ScaleDown) UpdateUnneededNodes(
 // updateUnremovableNodes updates unremovableNodes map according to current
 // state of the cluster. Removes from the map nodes that are no longer in the
 // nodes list.
+// 根据集群的状态更新unremovableNodes，将不在nodes列表的node从映射表unremovableNodes删除
 func (sd *ScaleDown) updateUnremovableNodes(nodes []*apiv1.Node) {
 	if len(sd.unremovableNodes) <= 0 {
 		return
@@ -368,45 +388,54 @@ func (sd *ScaleDown) chooseCandidates(nodes []*apiv1.Node) ([]*apiv1.Node, []*ap
 
 // TryToScaleDown tries to scale down the cluster. It returns ScaleDownResult indicating if any node was
 // removed and error if such occurred.
+// 尝试缩小集群
+// 1.先进行一系列的判定，而后删除空节点；2.进行一系列的处理，将可移动pod的节点重新整合，移除掉移走Pod的Node
 func (sd *ScaleDown) TryToScaleDown(allNodes []*apiv1.Node, pods []*apiv1.Pod, pdbs []*policyv1.PodDisruptionBudget, currentTime time.Time) (ScaleDownResult, errors.AutoscalerError) {
 	nodeDeletionDuration := time.Duration(0)
 	findNodesToRemoveDuration := time.Duration(0)
+	// 更新收缩不同部分的时间参数
 	defer updateScaleDownMetrics(time.Now(), &findNodesToRemoveDuration, &nodeDeletionDuration)
+	// 过滤掉master的nodes
 	nodesWithoutMaster := filterOutMasters(allNodes, pods)
 	candidates := make([]*apiv1.Node, 0)
 	readinessMap := make(map[string]bool)
-
+	// 资源限制信息(最大最小的nodes等)
 	resourceLimiter, errCP := sd.context.CloudProvider.GetResourceLimiter()
 	if errCP != nil {
 		return ScaleDownError, errors.ToAutoscalerError(
 			errors.CloudProviderError,
 			errCP)
 	}
+	// 计算cpu和内存的需求总量；以及剩余的量
 	coresTotal, memoryTotal := calculateCoresAndMemoryTotal(nodesWithoutMaster, currentTime)
 	coresLeft := coresTotal - resourceLimiter.GetMin(cloudprovider.ResourceNameCores)
 	memoryLeft := memoryTotal - resourceLimiter.GetMin(cloudprovider.ResourceNameMemory)
-
+	// 获取provider的ng的currSize；在k8s稳定后达到的大小
 	nodeGroupSize := getNodeGroupSizeMap(sd.context.CloudProvider)
 	for _, node := range nodesWithoutMaster {
+		// 对unneed的节点组进行是否可缩放判断
 		if val, found := sd.unneededNodes[node.Name]; found {
 
 			glog.V(2).Infof("%s was unneeded for %s", node.Name, currentTime.Sub(val).String())
 
 			// Check if node is marked with no scale down annotation.
+			// 检查是否有缩放的注释（曾经缩放失败的node）
 			if hasNoScaleDownAnnotation(node) {
 				glog.V(4).Infof("Skipping %s - scale down disabled annotation found", node.Name)
 				continue
 			}
-
+			// k8s的状态，是否ready
 			ready, _, _ := kube_util.GetReadinessState(node)
 			readinessMap[node.Name] = ready
 
 			// Check how long the node was underutilized.
+			// 检查多久未充分利用该node（unneed的时间检测）
 			if ready && !val.Add(sd.context.ScaleDownUnneededTime).Before(currentTime) {
 				continue
 			}
 
 			// Unready nodes may be deleted after a different time than underutilized nodes.
+			// 与未充分利用的节点相比，未使用节点可能会在不同的时间之后被删除。（unready的时间检测）
 			if !ready && !val.Add(sd.context.ScaleDownUnreadyTime).Before(currentTime) {
 				continue
 			}
@@ -426,12 +455,12 @@ func (sd *ScaleDown) TryToScaleDown(allNodes []*apiv1.Node, pods []*apiv1.Pod, p
 				glog.Errorf("Error while checking node group size %s: group size not found in cache", nodeGroup.Id())
 				continue
 			}
-
+			// 当前的节点组尺寸小于等于阈值，则放弃缩放
 			if size <= nodeGroup.MinSize() {
 				glog.V(1).Infof("Skipping %s - node group min size reached", node.Name)
 				continue
 			}
-
+			// 节点的cpu和内存大于要缩放掉的资源，则放弃缩放
 			nodeCPU, nodeMemory, err := getNodeCoresAndMemory(node)
 			if err != nil {
 				glog.Warningf("Error getting node resources: %v", err)
@@ -444,7 +473,7 @@ func (sd *ScaleDown) TryToScaleDown(allNodes []*apiv1.Node, pods []*apiv1.Pod, p
 				glog.V(4).Infof("Skipping %s - not enough memory limit left", node.Name)
 				continue
 			}
-
+			// 缩放node候选
 			candidates = append(candidates, node)
 		}
 	}
@@ -456,11 +485,16 @@ func (sd *ScaleDown) TryToScaleDown(allNodes []*apiv1.Node, pods []*apiv1.Pod, p
 	// Trying to delete empty nodes in bulk. If there are no empty nodes then CA will
 	// try to delete not-so-empty nodes, possibly killing some pods and allowing them
 	// to recreate on other nodes.
+	// 尝试批量删除空节点。 如果没有空节点，则CA将尝试删除不太空的节点，可能会杀死一些Pod并允许它们在其他节点上重新创建。
+
+	// 在候选者candidates中找到空节点，并返回可以同时被删除的空节点列表。
 	emptyNodes := getEmptyNodes(candidates, pods, sd.context.MaxEmptyBulkDelete, coresLeft, memoryLeft, sd.context.CloudProvider)
 	if len(emptyNodes) > 0 {
 		nodeDeletionStart := time.Now()
 		confirmation := make(chan errors.AutoscalerError, len(emptyNodes))
+		// 删除cloud provider的节点
 		sd.scheduleDeleteEmptyNodes(emptyNodes, sd.context.ClientSet, sd.context.Recorder, readinessMap, confirmation)
+		// 等待节点被删除
 		err := sd.waitForEmptyNodesDeleted(emptyNodes, confirmation)
 		nodeDeletionDuration = time.Now().Sub(nodeDeletionStart)
 		if err == nil {
@@ -471,11 +505,15 @@ func (sd *ScaleDown) TryToScaleDown(allNodes []*apiv1.Node, pods []*apiv1.Pod, p
 
 	findNodesToRemoveStart := time.Now()
 	// Only scheduled non expendable pods are taken into account and have to be moved.
+	// 只有被调度的非消耗性的Pods被考虑并必须移动
 	nonExpendablePods := FilterOutExpendablePods(pods, sd.context.ExpendablePodsPriorityCutoff)
 	// We look for only 1 node so new hints may be incomplete.
+	// 暂时只会做一个node的处理，所以可能提示不完整
+	// 找到可以删除的节点。 还会返回有关每个pods重新安排的位置信息。
 	nodesToRemove, _, _, err := simulator.FindNodesToRemove(candidates, nodesWithoutMaster, nonExpendablePods, sd.context.ClientSet,
 		sd.context.PredicateChecker, 1, false,
 		sd.podLocationHints, sd.usageTracker, time.Now(), pdbs)
+	// 计算nodes移除的时间
 	findNodesToRemoveDuration = time.Now().Sub(findNodesToRemoveStart)
 
 	if err != nil {
@@ -485,6 +523,7 @@ func (sd *ScaleDown) TryToScaleDown(allNodes []*apiv1.Node, pods []*apiv1.Pod, p
 		glog.V(1).Infof("No node to remove")
 		return ScaleDownNoNodeDeleted, nil
 	}
+	// 对可删除的节点进行Pod整合
 	toRemove := nodesToRemove[0]
 	utilization := sd.nodeUtilizationMap[toRemove.Node.Name]
 	podNames := make([]string, 0, len(toRemove.PodsToReschedule))
@@ -497,20 +536,30 @@ func (sd *ScaleDown) TryToScaleDown(allNodes []*apiv1.Node, pods []*apiv1.Pod, p
 		toRemove.Node.Name, utilization, strings.Join(podNames, ","))
 
 	// Nothing super-bad should happen if the node is removed from tracker prematurely.
+	// 将Node从tracker里删除，防止发生异常
 	simulator.RemoveNodeFromTracker(sd.usageTracker, toRemove.Node.Name, sd.unneededNodes)
 	nodeDeletionStart := time.Now()
 
 	// Starting deletion.
+	// 开始node删除工作...
 	nodeDeletionDuration = time.Now().Sub(nodeDeletionStart)
 	sd.nodeDeleteStatus.SetDeleteInProgress(true)
 
 	go func() {
 		// Finishing the delete process once this goroutine is over.
+		// 当删除结束，要将状态设置回false
 		defer sd.nodeDeleteStatus.SetDeleteInProgress(false)
+		// 执行CA删除node操作
 		err := sd.deleteNode(toRemove.Node, toRemove.PodsToReschedule)
 		if err != nil {
 			glog.Errorf("Failed to delete %s: %v", toRemove.Node.Name, err)
 			return
+		}
+		// K8S删除node
+		k8sErr := sd.context.ClientSet.CoreV1().Nodes().Delete(toRemove.Node.Name, nil)
+		if k8sErr != nil {
+			glog.Errorf("Failed to delete %s for k8s: %v", toRemove.Node.Name, k8sErr)
+			//return
 		}
 		if readinessMap[toRemove.Node.Name] {
 			metrics.RegisterScaleDown(1, metrics.Underutilized)
@@ -600,7 +649,9 @@ func (sd *ScaleDown) scheduleDeleteEmptyNodes(emptyNodes []*apiv1.Node, client k
 		glog.V(0).Infof("Scale-down: removing empty node %s", node.Name)
 		sd.context.LogRecorder.Eventf(apiv1.EventTypeNormal, "ScaleDownEmpty", "Scale-down: removing empty node %s", node.Name)
 		simulator.RemoveNodeFromTracker(sd.usageTracker, node.Name, sd.unneededNodes)
+		// TODO 这里并发删除节点，对于阿里云可能有问题。
 		go func(nodeToDelete *apiv1.Node) {
+			// 设置taint字段，使节点处于不可调度状态（unschedulable）
 			taintErr := deletetaint.MarkToBeDeleted(nodeToDelete, client)
 			if taintErr != nil {
 				recorder.Eventf(nodeToDelete, apiv1.EventTypeWarning, "ScaleDownFailed", "failed to mark the node as toBeDeleted/unschedulable: %v", taintErr)
@@ -610,13 +661,14 @@ func (sd *ScaleDown) scheduleDeleteEmptyNodes(emptyNodes []*apiv1.Node, client k
 
 			var deleteErr errors.AutoscalerError
 			// If we fail to delete the node we want to remove delete taint
+			// 如果删除node失败，把taint字段删除
 			defer func() {
 				if deleteErr != nil {
 					deletetaint.CleanToBeDeleted(nodeToDelete, client)
 					recorder.Eventf(nodeToDelete, apiv1.EventTypeWarning, "ScaleDownFailed", "failed to delete empty node: %v", deleteErr)
 				}
 			}()
-
+			// 删除cloud provider的节点，在Kubernetes方面不会执行额外的预删除操作。
 			deleteErr = deleteNodeFromCloudProvider(nodeToDelete, sd.context.CloudProvider,
 				sd.context.Recorder, sd.clusterStateRegistry)
 			if deleteErr == nil {
@@ -624,6 +676,13 @@ func (sd *ScaleDown) scheduleDeleteEmptyNodes(emptyNodes []*apiv1.Node, client k
 					metrics.RegisterScaleDown(1, metrics.Empty)
 				} else {
 					metrics.RegisterScaleDown(1, metrics.Unready)
+				}
+				// 在scale down之后，进行K8s的node删除工作。
+				glog.Infof("删除k8s的Node:%s", node.Name)
+				k8sErr := sd.context.ClientSet.CoreV1().Nodes().Delete(nodeToDelete.Name, nil)
+				if k8sErr != nil {
+					glog.Errorf("Failed to delete %s for k8s: %v", nodeToDelete.Name, k8sErr)
+					//return
 				}
 			}
 			confirmation <- deleteErr
@@ -806,6 +865,7 @@ func cleanToBeDeleted(nodes []*apiv1.Node, client kube_client.Interface, recorde
 
 // Removes the given node from cloud provider. No extra pre-deletion actions are executed on
 // the Kubernetes side.
+// 删除cloud provider的节点，在Kubernetes方面不会执行额外的预删除操作。
 func deleteNodeFromCloudProvider(node *apiv1.Node, cloudProvider cloudprovider.CloudProvider,
 	recorder kube_record.EventRecorder, registry *clusterstate.ClusterStateRegistry) errors.AutoscalerError {
 	nodeGroup, err := cloudProvider.NodeGroupForNode(node)
