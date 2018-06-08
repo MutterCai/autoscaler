@@ -58,18 +58,19 @@ func (m *autoScalingWrapper) getAutoscalingGroupsByNames(names []string) ([]ess.
 	// 构造查询伸缩组的请求
 	request := ess.CreateDescribeScalingGroupsRequest()
 	for i := 0; i < len(names); i++ {
-		if i == 0 {
-			//request.ScalingGroupName = names[i]
-			err := SetInfo(request, "ScalingGroupName", names[i])
-			if err != nil {
-				return nil, err
-			}
-		}else{
-			err := SetInfo(request, "ScalingGroupName"+strconv.Itoa(i), names[i])
-			if err != nil {
-				return nil, err
-			}
+		//if i == 0 {
+		//	//request.ScalingGroupName = names[i]
+		//	err := SetInfo(request, "ScalingGroupName", names[i])
+		//	if err != nil {
+		//		return nil, err
+		//	}
+		//}else{
+		// TODO 这里阿里云sdk和官方的文档都有问题，ScalingGroupName字段无法使用，只能从ScalingGroupName1开始
+		err := SetInfo(request, "ScalingGroupName"+strconv.Itoa(i+1), names[i])
+		if err != nil {
+			return nil, err
 		}
+		//}
 	}
 	// 执行查询伸缩组
 	response, err := m.ess.DescribeScalingGroups(request)
@@ -208,4 +209,15 @@ func (m *autoScalingWrapper) removeInstances(scalingGroupID string, instances []
 		return "", err
 	}
 	return response.ScalingActivityId, nil
+}
+
+func (m *autoScalingWrapper) getAutoscalingGroupActivities(scalingGroupID string, scalingActivityID string) ([]ess.ScalingActivity, error) {
+	request := ess.CreateDescribeScalingActivitiesRequest()
+	request.ScalingGroupId = scalingGroupID
+	request.ScalingActivityId1 = scalingActivityID
+	response, err := m.ess.DescribeScalingActivities(request)
+	if err != nil {
+		return nil, err
+	}
+	return response.ScalingActivities.ScalingActivity, nil
 }

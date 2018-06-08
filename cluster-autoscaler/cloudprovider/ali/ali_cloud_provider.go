@@ -26,6 +26,7 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
 	"k8s.io/autoscaler/cluster-autoscaler/utils/errors"
 	"k8s.io/kubernetes/pkg/scheduler/schedulercache"
+	"github.com/golang/glog"
 )
 
 
@@ -204,6 +205,7 @@ func (ng *AliNodeGroup) IncreaseSize(delta int) error {
 		return fmt.Errorf("size increase must be positive")
 	}
 	size := ng.asg.curSize
+	glog.Infof("IncreaseSize curSize: %d", ng.asg.curSize)
 	if size+delta > ng.asg.maxSize {
 		return fmt.Errorf("size increase too large - desired:%d max:%d", size+delta, ng.asg.maxSize)
 	}
@@ -221,6 +223,7 @@ func (ng *AliNodeGroup) DecreaseTargetSize(delta int) error {
 	}
 
 	size := ng.asg.curSize
+	glog.Infof("DecreaseTargetSize curSize: %d", ng.asg.curSize)
 	nodes, err := ng.aliManager.GetAsgNodes(ng.asg.AliRef)
 	if err != nil {
 		return err

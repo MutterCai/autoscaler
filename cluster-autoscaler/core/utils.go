@@ -256,6 +256,7 @@ func GetNodeInfosForGroups(nodes []*apiv1.Node, cloudProvider cloudprovider.Clou
 
 		// No good template, trying to generate one. This is called only if there are no
 		// working nodes in the node groups. By default CA tries to use a real-world example.
+		// 没有好的模板，试图生成一个。 这仅在节点组中没有工作节点时才会调用
 		baseNodeInfo, err := nodeGroup.TemplateNodeInfo()
 		if err != nil {
 			if err == cloudprovider.ErrNotImplemented {
