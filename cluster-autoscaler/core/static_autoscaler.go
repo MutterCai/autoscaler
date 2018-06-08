@@ -152,7 +152,8 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 			readyNodes[i].Spec.ProviderID = "cn-hongkong."+readyNodes[i].Name
 		}
 	}
-
+	//data, _ := json.Marshal(allNodes)
+	//glog.Infof("all nodes: %s",data)
 	// 检测判断集群是否为空
 	if a.actOnEmptyCluster(allNodes, readyNodes, currentTime) {
 		return nil

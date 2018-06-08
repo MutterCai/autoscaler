@@ -65,9 +65,6 @@ const (
 const (
 	// ScaleDownDisabledKey is the name of annotation marking node as not eligible for scale down.
 	ScaleDownDisabledKey = "cluster-autoscaler.kubernetes.io/scale-down-disabled"
-
-	// unready
-	AfterScaleDownUnready = "cluster-autoscaler.kubernetes.io/after-scale-down-unready"
 )
 
 const (

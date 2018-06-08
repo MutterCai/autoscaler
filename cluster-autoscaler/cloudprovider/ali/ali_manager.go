@@ -35,6 +35,7 @@ import (
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/ess"
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
 	"github.com/aws/aws-sdk-go/service/autoscaling"
+	"os"
 )
 
 const (
@@ -71,9 +72,9 @@ func createAliManagerInternal(
 	//		return nil, err
 	//	}
 	//}
-	cfg.Global.Region = "cn-hongkong"
-	cfg.Global.AccessKeyID = "LTAITh6uSXRCv14k"
-	cfg.Global.AccessKeySecret = "zm4qbsuKnDQ3VRIxAQzFKvMt9aOBuI"
+	cfg.Global.Region = os.Getenv("Region")
+	cfg.Global.AccessKeyID = os.Getenv("AccessKeyID")
+	cfg.Global.AccessKeySecret = os.Getenv("AccessKeySecret")
 	if service == nil {
 		// ess的API实例
 		essClient, err := ess.NewClientWithAccessKey(
@@ -183,6 +184,7 @@ func (m *AliManager) SetAsgSize(asg *asg, size int) error {
 }
 
 // DeleteInstances deletes the given instances. All instances must be controlled by the same ASG.
+// TODO 阿里云支持批量删除，但是多次删除的支持不友好，必须等待上次请求执行完毕后才接收删除请求；CA流程上是以单个多次删除进行处理
 func (m *AliManager) DeleteInstances(instances []*AliInstanceRef) error {
 	if len(instances) == 0 {
 		return nil
@@ -232,7 +234,7 @@ func (m *AliManager) getAsgTemplate(asg *asg) (*asgTemplate, error) {
 	if err != nil {
 		return nil, err
 	}
-	// TODO 这里获取的配置是一个数组，暂时以第一个数据作为模板
+	// TODO 这里获取的配置是一个数组，以第一个数据作为模板(被应用的配置，规则上也要求必须至少存在一个配置)
 	return &asgTemplate{
 		InstanceType: InstanceTypes[cfg[0].InstanceType],
 		Configuration: cfg[0],
