@@ -17,6 +17,7 @@ limitations under the License.
 package input
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/golang/glog"
@@ -24,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
+	vpa_types "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/poc.autoscaling.k8s.io/v1alpha1"
 	vpa_clientset "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/client/clientset/versioned"
 	vpa_api "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/client/clientset/versioned/typed/poc.autoscaling.k8s.io/v1alpha1"
 	vpa_lister "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/client/listers/poc.autoscaling.k8s.io/v1alpha1"
@@ -45,7 +47,7 @@ import (
 type ClusterStateFeeder interface {
 
 	// InitFromHistoryProvider loads historical pod spec into clusterState.
-	InitFromHistoryProvider()
+	InitFromHistoryProvider(historyProvider history.HistoryProvider)
 
 	// InitFromCheckpoints loads historical checkpoints into clusterState.
 	InitFromCheckpoints()
@@ -64,7 +66,7 @@ type ClusterStateFeeder interface {
 }
 
 // NewClusterStateFeeder creates new ClusterStateFeeder with internal data providers, based on kube client config and a historyProvider.
-func NewClusterStateFeeder(config *rest.Config, historyProvider history.HistoryProvider, clusterState *model.ClusterState) ClusterStateFeeder {
+func NewClusterStateFeeder(config *rest.Config, clusterState *model.ClusterState) ClusterStateFeeder {
 	kubeClient := kube_client.NewForConfigOrDie(config)
 	podLister, observer := newPodClients(kubeClient)
 	return &clusterStateFeeder{
@@ -75,7 +77,6 @@ func NewClusterStateFeeder(config *rest.Config, historyProvider history.HistoryP
 		vpaClient:           vpa_clientset.NewForConfigOrDie(config).PocV1alpha1(),
 		vpaCheckpointClient: vpa_clientset.NewForConfigOrDie(config).PocV1alpha1(),
 		vpaLister:           vpa_api_util.NewAllVpasLister(vpa_clientset.NewForConfigOrDie(config), make(chan struct{})),
-		historyProvider:     historyProvider,
 		clusterState:        clusterState,
 	}
 }
@@ -111,13 +112,12 @@ type clusterStateFeeder struct {
 	vpaClient           vpa_api.VerticalPodAutoscalersGetter
 	vpaCheckpointClient vpa_api.VerticalPodAutoscalerCheckpointsGetter
 	vpaLister           vpa_lister.VerticalPodAutoscalerLister
-	historyProvider     history.HistoryProvider
 	clusterState        *model.ClusterState
 }
 
-func (feeder *clusterStateFeeder) InitFromHistoryProvider() {
+func (feeder *clusterStateFeeder) InitFromHistoryProvider(historyProvider history.HistoryProvider) {
 	glog.V(3).Info("Initializing VPA from history provider")
-	clusterHistory, err := feeder.historyProvider.GetClusterHistory()
+	clusterHistory, err := historyProvider.GetClusterHistory()
 	if err != nil {
 		glog.Errorf("Cannot get cluster history: %v", err)
 	}
@@ -139,6 +139,22 @@ func (feeder *clusterStateFeeder) InitFromHistoryProvider() {
 	}
 }
 
+func (feeder *clusterStateFeeder) setVpaCheckpoint(checkpoint *vpa_types.VerticalPodAutoscalerCheckpoint) error {
+	vpaID := model.VpaID{Namespace: checkpoint.Namespace, VpaName: checkpoint.Spec.VPAObjectName}
+	vpa, exists := feeder.clusterState.Vpas[vpaID]
+	if !exists {
+		return fmt.Errorf("Cannot load checkpoint to missing VPA object %+v", vpaID)
+	}
+
+	cs := model.NewAggregateContainerState()
+	err := cs.LoadFromCheckpoint(&checkpoint.Status)
+	if err != nil {
+		return fmt.Errorf("Cannot load checkpoint for VPA %+v. Reason: %v", vpa.ID, err)
+	}
+	vpa.ContainersInitialAggregateState[checkpoint.Spec.ContainerName] = cs
+	return nil
+}
+
 func (feeder *clusterStateFeeder) InitFromCheckpoints() {
 	glog.V(3).Info("Initializing VPA from checkpoints")
 	feeder.LoadVPAs()
@@ -156,11 +172,13 @@ func (feeder *clusterStateFeeder) InitFromCheckpoints() {
 			glog.Errorf("Cannot list VPA checkpoints from namespace %v. Reason: %+v", namespace, err)
 		}
 		for _, checkpoint := range checkpointList.Items {
-			err = feeder.clusterState.SetVpaCheckpoint(&checkpoint)
+
+			glog.V(3).Infof("Loading VPA %s/%s checkpoint for %s", checkpoint.ObjectMeta.Namespace, checkpoint.Spec.VPAObjectName, checkpoint.Spec.ContainerName)
+			err = feeder.setVpaCheckpoint(&checkpoint)
 			if err != nil {
 				glog.Errorf("Error while loading checkpoint. Reason: %+v", err)
 			}
-			glog.V(3).Infof("Loaded VPA %s/%s checkpoint for %s", checkpoint.ObjectMeta.Namespace, checkpoint.Spec.VPAObjectName, checkpoint.Spec.ContainerName)
+
 		}
 	}
 }
