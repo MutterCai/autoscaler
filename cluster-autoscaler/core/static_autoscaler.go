@@ -121,6 +121,7 @@ func (a *StaticAutoscaler) cleanUpIfRequired() {
 
 // RunOnce iterates over node groups and scales them up/down if necessary
 func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError {
+	// 删除先前运行的CA残留，每个运行时只会删除一次
 	a.cleanUpIfRequired()
 
 	unschedulablePodLister := a.UnschedulablePodLister()
@@ -136,6 +137,7 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 	if typedErr != nil {
 		return typedErr
 	}
+	// TODO 因为阿里云的ProviderID是空的，这里需要做一个补充
 	if a.CloudProvider.Name() == "ali" {
 		for i := 0; i < len(allNodes); i++ {
 			if len(allNodes[i].Spec.ProviderID) == 0 {
@@ -178,10 +180,11 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 			}
 		}
 	}
+	// 检测判断集群是否为空
 	if a.actOnEmptyCluster(allNodes, readyNodes, currentTime) {
 		return nil
 	}
-
+	// 更新集群状态
 	typedErr = a.updateClusterState(allNodes, currentTime)
 	if typedErr != nil {
 		return typedErr
@@ -190,6 +193,7 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 
 	// Update status information when the loop is done (regardless of reason)
 	defer func() {
+		// WriteStatusConfigMap通知状态信息是否应写入ConfigMap
 		if autoscalingContext.WriteStatusConfigMap {
 			status := a.clusterStateRegistry.GetStatus(currentTime)
 			utils.WriteStatusConfigMap(autoscalingContext.ClientSet, autoscalingContext.ConfigNamespace,
@@ -198,6 +202,7 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 	}()
 	// Check if there are any nodes that failed to register in Kubernetes
 	// master.
+	// 检测未能在k8s的master中注册的节点，删除掉
 	unregisteredNodes := a.clusterStateRegistry.GetUnregisteredNodes()
 	if len(unregisteredNodes) > 0 {
 		glog.V(1).Infof("%d unregistered nodes present", len(unregisteredNodes))
@@ -218,6 +223,7 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 			return nil
 		}
 	}
+	// 检测群集运行状况是否在可接受的限制范围内
 	if !a.clusterStateRegistry.IsClusterHealthy() {
 		glog.Warning("Cluster is not ready for autoscaling")
 		scaleDown.CleanUpUnneededNodes()
@@ -228,6 +234,7 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 	// Check if there has been a constant difference between the number of nodes in k8s and
 	// the number of nodes on the cloud provider side.
 	// TODO: andrewskim - add protection for ready AWS nodes.
+	// 检查k8s中的节点数量与云提供者端的节点数量之间是否存在恒定差异。
 	fixedSomething, err := fixNodeGroupSize(autoscalingContext, a.clusterStateRegistry, currentTime)
 	if err != nil {
 		glog.Errorf("Failed to fix node group sizes: %v", err)
@@ -239,7 +246,7 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 	}
 
 	metrics.UpdateLastTime(metrics.Autoscaling, time.Now())
-
+	// 在对群集进行缩放之前处理不可调度和已调度的pod
 	allUnschedulablePods, err := unschedulablePodLister.List()
 	if err != nil {
 		glog.Errorf("Failed to list unscheduled pods: %v", err)
@@ -258,7 +265,8 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 		glog.Errorf("Failed to process pod list: %v", err)
 		return errors.ToAutoscalerError(errors.InternalError, err)
 	}
-
+	// 可以运行以根据群集的当前状态更新predicateChecker配置
+	// PredicateChecker检查一个容器是否可以放入一个节点
 	ConfigurePredicateCheckerForLoop(allUnschedulablePods, allScheduled, a.PredicateChecker)
 
 	// We need to check whether pods marked as unschedulable are actually unschedulable.
@@ -276,16 +284,21 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 	//
 	// With the check enabled the last point won't happen because CA will ignore a pod
 	// which is supposed to schedule on an existing node.
+	// 检测pods是否真的不可调度，是否是因为新增加的新节点，调度还没设置好引起的搁置行为。这种情况并不希望触发扩容操作。
 	scaleDownForbidden := false
-
+	// 清除Pod的TPU请求，所以它们不会干扰调度模拟
 	unschedulablePodsWithoutTPUs := tpu.ClearTPURequests(allUnschedulablePods)
 
 	// Some unschedulable pods can be waiting for lower priority pods preemption so they have nominated node to run.
 	// Such pods don't require scale up but should be considered during scale down.
+	// 不可调度的Pods可以等待优先级较低的pods抢占
+	// 过滤消耗的pods并且拆分后，等待优先权较低的pods抢占
 	unschedulablePods, unschedulableWaitingForLowerPriorityPreemption := FilterOutExpendableAndSplit(unschedulablePodsWithoutTPUs, a.ExpendablePodsPriorityCutoff)
 
 	glog.V(4).Infof("Filtering out schedulables")
 	filterOutSchedulableStart := time.Now()
+	// 检查由Scheduler标记为不可调度的<unschedulableCandidates>的pod是否实际上不能在任何节点上调度并过滤出可能的调度
+	// 它考虑绑定到节点的pod，并将在优先级较低的pod抢占后进行调度
 	unschedulablePodsToHelp := FilterOutSchedulable(unschedulablePods, readyNodes, allScheduled,
 		unschedulableWaitingForLowerPriorityPreemption, a.PredicateChecker, a.ExpendablePodsPriorityCutoff)
 	metrics.UpdateDurationFromStart(metrics.FilterOutSchedulable, filterOutSchedulableStart)
@@ -346,8 +359,9 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 		unneededStart := time.Now()
 
 		glog.V(4).Infof("Calculating unneeded nodes")
-
+		// 清理scaleDown内部状态。
 		scaleDown.CleanUp(currentTime)
+		// 获得可能不需要的节点
 		potentiallyUnneeded := getPotentiallyUnneededNodes(autoscalingContext, allNodes)
 
 		typedErr := scaleDown.UpdateUnneededNodes(allNodes, potentiallyUnneeded, append(allScheduled, unschedulableWaitingForLowerPriorityPreemption...), currentTime, pdbs)
@@ -375,7 +389,7 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 			"lastScaleDownDeleteTime=%v lastScaleDownFailTime=%s scaleDownForbidden=%v isDeleteInProgress=%v",
 			calculateUnneededOnly, a.lastScaleUpTime, a.lastScaleDownDeleteTime, a.lastScaleDownFailTime,
 			scaleDownForbidden, scaleDown.nodeDeleteStatus.IsDeleteInProgress())
-
+		// 可所容判断
 		if !calculateUnneededOnly {
 			glog.V(4).Infof("Starting scale down")
 
