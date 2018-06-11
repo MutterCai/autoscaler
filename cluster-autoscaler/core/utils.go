@@ -18,7 +18,6 @@ package core
 
 import (
 	"fmt"
-	"math"
 	"math/rand"
 	"reflect"
 	"time"
@@ -256,7 +255,6 @@ func GetNodeInfosForGroups(nodes []*apiv1.Node, cloudProvider cloudprovider.Clou
 
 		// No good template, trying to generate one. This is called only if there are no
 		// working nodes in the node groups. By default CA tries to use a real-world example.
-		// 没有好的模板，试图生成一个。 这仅在节点组中没有工作节点时才会调用
 		baseNodeInfo, err := nodeGroup.TemplateNodeInfo()
 		if err != nil {
 			if err == cloudprovider.ErrNotImplemented {
@@ -489,37 +487,24 @@ func ConfigurePredicateCheckerForLoop(unschedulablePods []*apiv1.Pod, schedulabl
 	}
 }
 
-// Getting node cores/memory
-const (
-	// Megabyte is 2^20 bytes.
-	Megabyte float64 = 1024 * 1024
-)
-
-func getNodeCoresAndMemory(node *apiv1.Node) (int64, int64, error) {
-	cores, err := getNodeResource(node, apiv1.ResourceCPU)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	memory, err := getNodeResource(node, apiv1.ResourceMemory)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	if cores <= 0 || memory <= 0 {
-		return 0, 0, fmt.Errorf("Invalid node CPU/memory values - cpu %v, memory %v", cores, memory)
-	}
-
-	memoryMb := math.Ceil(float64(memory) / Megabyte)
-	return cores, int64(memoryMb), nil
+func getNodeCoresAndMemory(node *apiv1.Node) (int64, int64) {
+	cores := getNodeResource(node, apiv1.ResourceCPU)
+	memory := getNodeResource(node, apiv1.ResourceMemory)
+	return cores, memory
 }
 
-func getNodeResource(node *apiv1.Node, resource apiv1.ResourceName) (int64, error) {
+func getNodeResource(node *apiv1.Node, resource apiv1.ResourceName) int64 {
 	nodeCapacity, found := node.Status.Capacity[resource]
 	if !found {
-		return 0, fmt.Errorf("Failed to get %v for node %v", resource, node.Name)
+		return 0
 	}
-	return nodeCapacity.Value(), nil
+
+	nodeCapacityValue := nodeCapacity.Value()
+	if nodeCapacityValue < 0 {
+		nodeCapacityValue = 0
+	}
+
+	return nodeCapacityValue
 }
 
 func getNodeGroupSizeMap(cloudProvider cloudprovider.CloudProvider) map[string]int {

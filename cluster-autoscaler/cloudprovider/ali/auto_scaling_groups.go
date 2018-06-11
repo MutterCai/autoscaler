@@ -52,7 +52,7 @@ type asg struct {
 	maxSize int
 	curSize int
 	// 信息集
-	ScalingGroupItem		*ess.ScalingGroup
+	ScalingGroupItem		ess.ScalingGroup
 	// 配置信息
 	ScalingConfiguration	[]ess.ScalingConfiguration
 	//AvailabilityZones       []string
@@ -283,7 +283,7 @@ func (m *asgCache) regenerate() error {
 	exists := make(map[AliRef]bool)
 	for _, group := range groups {
 		// 通过获取的asg信息分别构建asg对象
-		asg, err := m.buildAsgFromAli(&group)
+		asg, err := m.buildAsgFromAli(group)
 		if err != nil {
 			return err
 		}
@@ -331,7 +331,7 @@ func (m *asgCache) regenerate() error {
 	return nil
 }
 
-func (m *asgCache) buildAsgFromAli(g *ess.ScalingGroup) (*asg, error) {
+func (m *asgCache) buildAsgFromAli(g ess.ScalingGroup) (*asg, error) {
 	spec := dynamic.NodeGroupSpec{
 		Name:               g.ScalingGroupName,
 		MinSize:            g.MinSize,

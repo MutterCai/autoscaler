@@ -40,6 +40,7 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/simulator"
 	"k8s.io/autoscaler/cluster-autoscaler/utils/errors"
 	kube_util "k8s.io/autoscaler/cluster-autoscaler/utils/kubernetes"
+	"k8s.io/autoscaler/cluster-autoscaler/utils/units"
 	kube_client "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -52,8 +53,7 @@ import (
 	"github.com/spf13/pflag"
 )
 
-
-const ClusterAutoscalerVersion = "1.2.0"
+const ClusterAutoscalerVersion = "1.3.0-beta.0"
 
 // MultiStringFlag is a flag for passing multiple parameters using same flag
 type MultiStringFlag []string
@@ -69,10 +69,13 @@ func (flag *MultiStringFlag) Set(value string) error {
 	return nil
 }
 
-var (
-	nodeGroupsFlag             MultiStringFlag
-	nodeGroupAutoDiscoveryFlag MultiStringFlag
+func multiStringFlag(name string, usage string) *MultiStringFlag {
+	value := new(MultiStringFlag)
+	flag.Var(value, name, usage)
+	return value
+}
 
+var (
 	clusterName            = flag.String("cluster-name", "", "Autoscaled cluster name, if available")
 	address                = flag.String("address", ":8085", "The address to expose prometheus metrics.")
 	kubernetes             = flag.String("kubernetes", "", "Kubernetes master location. Leave blank for default")
@@ -80,15 +83,15 @@ var (
 	cloudConfig            = flag.String("cloud-config", "", "The path to the cloud provider configuration file.  Empty string for no configuration file.")
 	namespace              = flag.String("namespace", "kube-system", "Namespace in which cluster-autoscaler run.")
 	scaleDownEnabled       = flag.Bool("scale-down-enabled", true, "Should CA scale down the cluster")
-	scaleDownDelayAfterAdd = flag.Duration("scale-down-delay-after-add", 1*time.Minute,
+	scaleDownDelayAfterAdd = flag.Duration("scale-down-delay-after-add", 10*time.Minute,
 		"How long after scale up that scale down evaluation resumes")
 	scaleDownDelayAfterDelete = flag.Duration("scale-down-delay-after-delete", *scanInterval,
 		"How long after node deletion that scale down evaluation resumes, defaults to scanInterval")
-	scaleDownDelayAfterFailure = flag.Duration("scale-down-delay-after-failure", 1*time.Minute,
+	scaleDownDelayAfterFailure = flag.Duration("scale-down-delay-after-failure", 3*time.Minute,
 		"How long after scale down failure that scale down evaluation resumes")
-	scaleDownUnneededTime = flag.Duration("scale-down-unneeded-time", 1*time.Minute,
+	scaleDownUnneededTime = flag.Duration("scale-down-unneeded-time", 10*time.Minute,
 		"How long a node should be unneeded before it is eligible for scale down")
-	scaleDownUnreadyTime = flag.Duration("scale-down-unready-time", 2*time.Minute,
+	scaleDownUnreadyTime = flag.Duration("scale-down-unready-time", 20*time.Minute,
 		"How long an unready node should be unneeded before it is eligible for scale down")
 	scaleDownUtilizationThreshold = flag.Float64("scale-down-utilization-threshold", 0.5,
 		"Node utilization level, defined as sum of requested resources divided by capacity, below which a node can be considered for scale down")
@@ -119,6 +122,16 @@ var (
 	maxTotalUnreadyPercentage  = flag.Float64("max-total-unready-percentage", 45, "Maximum percentage of unready nodes in the cluster.  After this is exceeded, CA halts operations")
 	okTotalUnreadyCount        = flag.Int("ok-total-unready-count", 3, "Number of allowed unready nodes, irrespective of max-total-unready-percentage")
 	maxNodeProvisionTime       = flag.Duration("max-node-provision-time", 15*time.Minute, "Maximum time CA waits for node to be provisioned")
+	nodeGroupsFlag             = multiStringFlag(
+		"nodes",
+		"sets min,max size and other configuration data for a node group in a format accepted by cloud provider. Can be used multiple times. Format: <min>:<max>:<other...>")
+	nodeGroupAutoDiscoveryFlag = multiStringFlag(
+		"node-group-auto-discovery",
+		"One or more definition(s) of node group auto-discovery. "+
+			"A definition is expressed `<name of discoverer>:[<key>[=<value>]]`. "+
+			"The `aws` and `gce` cloud providers are currently supported. AWS matches by ASG tags, e.g. `asg:tag=tagKey,anotherTagKey`. "+
+			"GCE matches by IG name prefix, and requires you to specify min and max nodes per IG, e.g. `mig:namePrefix=pfx,min=0,max=10` "+
+			"Can be used multiple times.")
 
 	estimatorFlag = flag.String("estimator", estimator.BinpackingEstimatorName,
 		"Type of resource estimator to be used in scale up. Available values: ["+strings.Join(estimator.AvailableEstimators, ",")+"]")
@@ -146,14 +159,14 @@ func createAutoscalingOptions() context.AutoscalingOptions {
 	if err != nil {
 		glog.Fatalf("Failed to parse flags: %v", err)
 	}
-	// Convert memory limits to megabytes.
-	minMemoryTotal = minMemoryTotal * 1024
-	maxMemoryTotal = maxMemoryTotal * 1024
+	// Convert memory limits to bytes.
+	minMemoryTotal = minMemoryTotal * units.Gigabyte
+	maxMemoryTotal = maxMemoryTotal * units.Gigabyte
 
 	return context.AutoscalingOptions{
 		CloudConfig:                      *cloudConfig,
 		CloudProviderName:                *cloudProviderFlag,
-		NodeGroupAutoDiscovery:           nodeGroupAutoDiscoveryFlag,
+		NodeGroupAutoDiscovery:           *nodeGroupAutoDiscoveryFlag,
 		MaxTotalUnreadyPercentage:        *maxTotalUnreadyPercentage,
 		OkTotalUnreadyCount:              *okTotalUnreadyCount,
 		EstimatorName:                    *estimatorFlag,
@@ -166,7 +179,7 @@ func createAutoscalingOptions() context.AutoscalingOptions {
 		MinCoresTotal:                    minCoresTotal,
 		MaxMemoryTotal:                   maxMemoryTotal,
 		MinMemoryTotal:                   minMemoryTotal,
-		NodeGroups:                       nodeGroupsFlag,
+		NodeGroups:                       *nodeGroupsFlag,
 		ScaleDownDelayAfterAdd:           *scaleDownDelayAfterAdd,
 		ScaleDownDelayAfterDelete:        *scaleDownDelayAfterDelete,
 		ScaleDownDelayAfterFailure:       *scaleDownDelayAfterFailure,
@@ -285,13 +298,7 @@ func main() {
 	leaderElection.LeaderElect = true
 
 	bindFlags(&leaderElection, pflag.CommandLine)
-	flag.Var(&nodeGroupsFlag, "nodes", "sets min,max size and other configuration data for a node group in a format accepted by cloud provider."+
-		"Can be used multiple times. Format: <min>:<max>:<other...>")
-	flag.Var(&nodeGroupAutoDiscoveryFlag, "node-group-auto-discovery", "One or more definition(s) of node group auto-discovery. "+
-		"A definition is expressed `<name of discoverer>:[<key>[=<value>]]`. "+
-		"The `aws` and `gce` cloud providers are currently supported. AWS matches by ASG tags, e.g. `asg:tag=tagKey,anotherTagKey`. "+
-		"GCE matches by IG name prefix, and requires you to specify min and max nodes per IG, e.g. `mig:namePrefix=pfx,min=0,max=10` "+
-		"Can be used multiple times.")
+
 	kube_flag.InitFlags()
 
 	healthCheck := metrics.NewHealthCheck(*maxInactivityTimeFlag, *maxFailingTimeFlag)
