@@ -663,7 +663,7 @@ func (sd *ScaleDown) scheduleDeleteEmptyNodes(emptyNodes []*apiv1.Node, client k
 				}
 				if sd.context.CloudProviderName == "ali" {
 					// 在scale down之后，进行K8s的node删除工作。
-					glog.Infof("删除k8s的node:%s", node.Name)
+					glog.V(0).Infof("删除k8s的node:%s", node.Name)
 					k8sErr := sd.context.ClientSet.CoreV1().Nodes().Delete(nodeToDelete.Name, nil)
 					if k8sErr != nil {
 						glog.Errorf("从k8s删除node失败，node: %s ，错误信息: %v", nodeToDelete.Name, k8sErr)
@@ -734,7 +734,7 @@ func (sd *ScaleDown) deleteNode(node *apiv1.Node, pods []*apiv1.Pod) errors.Auto
 	}
 	if sd.context.CloudProviderName == "ali" {
 		// 在scale down之后，进行K8s的node删除工作。
-		glog.Infof("删除k8s的node:%s", node.Name)
+		glog.V(0).Infof("删除k8s的node:%s", node.Name)
 		k8sErr := sd.context.ClientSet.CoreV1().Nodes().Delete(node.Name, nil)
 		if k8sErr != nil {
 			glog.Errorf("从k8s删除node: %s 失败，错误信息: %v", node.Name, k8sErr)

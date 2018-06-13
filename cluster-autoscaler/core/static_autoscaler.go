@@ -154,7 +154,7 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 				if len(region) > 0 {
 					allNodes[i].Spec.ProviderID = region[0] + "." + allNodes[i].Name
 				} else {
-					glog.Infof("获取区域信息失败。")
+					glog.V(0).Infof("获取区域信息失败。")
 					allNodes[i].Spec.ProviderID = "cn-hongkong." + allNodes[i].Name
 				}
 			}
@@ -174,7 +174,7 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 				if len(region) > 0 {
 					allNodes[i].Spec.ProviderID = region[0] + allNodes[i].Name
 				} else {
-					glog.Infof("获取区域信息失败。")
+					glog.V(0).Infof("获取区域信息失败。")
 					allNodes[i].Spec.ProviderID = "cn-hongkong" + allNodes[i].Name
 				}
 			}

@@ -179,19 +179,19 @@ func (m *AliManager) SetAsgSize(asg *asg, size int) error {
 			m.activity.scalingActivityID = ""
 			m.activity.scalingGroupID = ""
 		}else{
-			return fmt.Errorf("有伸缩活动正在执行：%s，取消本次请求...", m.activity.scalingActivityID)
+			return fmt.Errorf("有伸缩活动正在执行，取消本次请求...")
 		}
 	}
 	// TODO 在循环开始应该将所有的规则清空最好。
 	// 创建规则、应用、删除规则
-	glog.V(4).Infof("创建伸缩规则...")
+	glog.V(0).Infof("创建伸缩规则...")
 	ruleResp, err := m.service.createAutoscalingRule(asg.ScalingGroupItem.ScalingGroupId, size)
 	if err != nil {
 		return err
 	}else{
 		// 如果规则创建没有错误，则退出的时候必须清理掉规则
 		defer func(scalingRuleId string) {
-			glog.V(4).Infof("删除伸缩规则...")
+			glog.V(0).Infof("删除伸缩规则...")
 			m.service.deleteAutoscalingRule(scalingRuleId)
 		}(ruleResp.ScalingRuleId)
 	}
@@ -219,7 +219,7 @@ func (m *AliManager) DeleteInstances(instances []*AliInstanceRef) error {
 			m.activity.scalingActivityID = ""
 			m.activity.scalingGroupID = ""
 		}else{
-			return fmt.Errorf("有伸缩活动正在执行：%s，取消本次请求...", m.activity.scalingActivityID)
+			return fmt.Errorf("有伸缩活动正在执行，取消本次请求...")
 		}
 	}
 	if len(instances) == 0 {
