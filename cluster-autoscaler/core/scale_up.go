@@ -41,7 +41,6 @@ import (
 // ScaleUp tries to scale the cluster up. Return true if it found a way to increase the size,
 // false if it didn't and error if an error occurred. Assumes that all nodes in the cluster are
 // ready and in sync with instance groups.
-// 假定集群中的所有节点都已准备好并与实例组同步。
 func ScaleUp(context *context.AutoscalingContext, processors *ca_processors.AutoscalingProcessors, clusterStateRegistry *clusterstate.ClusterStateRegistry, unschedulablePods []*apiv1.Pod,
 	nodes []*apiv1.Node, daemonSets []*extensionsv1.DaemonSet) (*status.ScaleUpStatus, errors.AutoscalerError) {
 	// From now on we only care about unschedulable pods that were marked after the newest
@@ -80,7 +79,6 @@ func ScaleUp(context *context.AutoscalingContext, processors *ca_processors.Auto
 	coresTotal, memoryTotal := calculateClusterCoresMemoryTotal(nodeGroups, nodeInfos)
 
 	upcomingNodes := make([]*schedulercache.NodeInfo, 0)
-	// 返回有多少新节点将很快添加到节点组中，或者应该尽快准备就绪。 该函数可能会高估节点的数量。
 	for nodeGroup, numberOfNodes := range clusterStateRegistry.GetUpcomingNodes() {
 		nodeTemplate, found := nodeInfos[nodeGroup]
 		if !found {
@@ -108,15 +106,11 @@ func ScaleUp(context *context.AutoscalingContext, processors *ca_processors.Auto
 
 	for _, nodeGroup := range nodeGroups {
 		// Autoprovisioned node groups without nodes are created later so skip check for them.
-		// 以后创建不带节点的自动资源化node groups，以便跳过检查它们。
-
-		// 检查nodeGroup是否确实存在于cloud provider; node group是否可以被scale up
 		if nodeGroup.Exist() && !clusterStateRegistry.IsNodeGroupSafeToScaleUp(nodeGroup.Id(), now) {
 			glog.Warningf("Node group %s is not ready for scaleup", nodeGroup.Id())
 			continue
 		}
-		// 节点组的当前目标大小(currSize)
-		// Kubernetes中的节点数量目前可能不同，但一旦稳定下来（新节点完成启动并注册或删除的节点完全删除），它应该等于Size
+
 		currentTargetSize, err := nodeGroup.TargetSize()
 		if err != nil {
 			glog.Errorf("Failed to get node group size: %v", err)
@@ -150,7 +144,7 @@ func ScaleUp(context *context.AutoscalingContext, processors *ca_processors.Auto
 			NodeGroup: nodeGroup,
 			Pods:      make([]*apiv1.Pod, 0),
 		}
-		// 从提供的node过滤出可被调度的Pod
+
 		option.Pods = FilterSchedulablePodsForNode(context, unschedulablePods, nodeGroup.Id(), nodeInfo)
 		for _, pod := range option.Pods {
 			podsRemainUnschedulable[pod] = false
@@ -293,11 +287,11 @@ func ScaleUp(context *context.AutoscalingContext, processors *ca_processors.Auto
 
 		clusterStateRegistry.Recalculate()
 		return &status.ScaleUpStatus{
-				ScaledUp:                true,
-				ScaleUpInfos:            scaleUpInfos,
-				PodsRemainUnschedulable: getRemainingPods(podsRemainUnschedulable),
-				PodsTriggeredScaleUp:    bestOption.Pods,
-				PodsAwaitEvaluation:     getPodsAwaitingEvaluation(unschedulablePods, podsRemainUnschedulable, bestOption.Pods)},
+			ScaledUp:                true,
+			ScaleUpInfos:            scaleUpInfos,
+			PodsRemainUnschedulable: getRemainingPods(podsRemainUnschedulable),
+			PodsTriggeredScaleUp:    bestOption.Pods,
+			PodsAwaitEvaluation:     getPodsAwaitingEvaluation(unschedulablePods, podsRemainUnschedulable, bestOption.Pods)},
 			nil
 	}
 
