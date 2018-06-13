@@ -13,12 +13,14 @@
 # limitations under the License.
 
 FROM k8s.gcr.io/debian-base-amd64:0.3
-LABEL maintainer="Marcin Wielgus <mwielgus@google.com>"
+LABEL maintainer="Cai"
 
 ENV DEBIAN_FRONTEND noninteractive
+
 RUN clean-install ca-certificates
+# 增加时区
+RUN mkdir -p /usr/local/go/lib/time
+COPY zoneinfo.zip /usr/local/go/lib/time/zoneinfo.zip
 
 ADD cluster-autoscaler cluster-autoscaler
-ADD run.sh run.sh
 
-CMD ./run.sh

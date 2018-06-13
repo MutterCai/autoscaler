@@ -1,125 +1,103 @@
-# Cluster Autoscaler
+# CA的阿里云支持
 
-# Introduction
+CA原本的MD文件改名成READMD_BACKUP.md
 
-Cluster Autoscaler is a tool that automatically adjusts the size of the Kubernetes cluster when:
-* there are pods that failed to run in the cluster due to insufficient resources.
-* some nodes in the cluster are so underutilized, for an extended period of time,
-that they can be deleted and their pods will be easily placed on some other, existing nodes.
+* 协定：在阿里云上创建的伸缩组名称，必须以Region开头  
+例如香港的伸缩组(Region=cn-hongkong): cn-hongkong.kubernetes-hongkong-group
 
-# FAQ/Documentation
+## 调试
 
-Is available [HERE](./FAQ.md).
+#### 阿里云sdk
+* go get -u github.com/aliyun/alibaba-cloud-sdk-go/sdk
 
-# Releases
+#### 环境变量
+* AccessKeyID  
+    进入阿里云，账户上的AccessKey，进入后可以获取到相关的信息
+* AccessKeySecret  
+    进入阿里云，账户上的AccessKey，进入后可以获取到相关的信息
+* Region  
+    根据阿里云的ess部署的区域设置
+    
+#### 启动参数
+* --v=4  
+    设置日志的等级，越高日志等级越低 
+* --cloud-provider=ali  
+    设置cloud provider的归属，这里使用ali
+* --skip-nodes-with-local-storage=false  
+    忽略本地存储节点
+* --node-group-auto-discovery=asg:tag=cn-hongkong.kubernetes-hongkong-group,cn-hongkong.kubernetes-hongkong-group2  
+    设置管理的伸缩组，多个组用','间隔
+* --kubeconfig kubeconfigFile  
+    设置管理的K8S集群，对应的kubeconfigFile为k8s的master的~/.kube/config文件
+    注意如果是外网应用应该将server的ip改成公网ip
+    
+## docker和k8s
 
-We strongly recommend using Cluster Autoscaler with version for which it was meant. We don't
-do ANY cross version testing so if you put the newest Cluster Autoscaler on an old cluster
-there is a big chance that it won't work as expected.
+#### docker镜像制作
+1. go build main.go  
+    编译ca二进制文件
+2. mv main cluster-autoscaler  
+    重命名二进制文件
+3. cp $GOROOT/lib/time/zoneinfo.zip .  
+    将zoneinfo拉到目录下，供dockerfile打包使用；zoneinfo.zip是go的时区库
+4. sudo docker build -t dockerHubRepository:version  
+    创建docker镜像
+5. sudo docker push  
+    推送docker镜像到仓库
 
-| Kubernetes Version  | CA Version   |
-|--------|--------|
-| 1.10.X | 1.2.X  |
-| 1.9.X  | 1.1.X  |
-| 1.8.X  | 1.0.X  |
-| 1.7.X  | 0.6.X  |
-| 1.6.X  | 0.5.X, 0.6.X<sup>*</sup>  |
-| 1.5.X  | 0.4.X  |
-| 1.4.X  | 0.3.X  |
-
-<sup>*</sup>Cluster Autoscaler 0.5.X is the official version shipped with k8s 1.6. We've done some basic tests using k8s 1.6 / CA 0.6 and we're not aware of any problems with this setup. However, CA internally simulates k8s scheduler and using different versions of scheduler code can lead to subtle issues.
-
-# Notable changes
-
-CA version 1.1.1:
-* Fixes around metrics in the multi-master configuration.
-* Fixes for unready nodes issues when quota is overrun.
-
-CA version 1.1.0:
-* Added [Azure support](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/cloudprovider/azure/README.md).
-* Added support for pod priorities. More details [here](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md#how-does-cluster-autoscaler-work-with-pod-priority-and-preemption).
-
-CA version 1.0.3:
-* Adds support for safe-to-evict annotation on pod. Pods with this annotation
-  can be evicted even if they don't meet other requirements for it.
-* Fixes an issue when too many nodes with GPUs could be added during scale-up
-    (https://github.com/kubernetes/kubernetes/issues/54959).
-
-CA Version 1.0.2:
-* Fixes issues with scaling node groups using GPU from 0 to 1 on GKE (https://github.com/kubernetes/autoscaler/pull/401) and AWS (https://github.com/kubernetes/autoscaler/issues/321).
-* Fixes a bug where goroutines performing API calls were leaking when using dynamic config on AWS (https://github.com/kubernetes/autoscaler/issues/252).
-* Node Autoprovisioning support for GKE (the implementation was included in 1.0.0, but this release includes some bugfixes and introduces metrics and events).
-
-CA Version 1.0.1:
-* Fixes a bug in handling nodes that, at the same time, fail to register in Kubernetes and can't be deleted from cloud provider (https://github.com/kubernetes/autoscaler/issues/369).
-* Improves estimation of resources available on a node when performing scale-from-0 on GCE (https://github.com/kubernetes/autoscaler/issues/326).
-* Bugfixes in the new GKE cloud provider implementation.
-
-CA Version 1.0:
-
-With this release we graduated Cluster Autoscaler to GA.
-
-* Support for 1000 nodes running 30 pods each. See: [Scalability testing  report](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/proposals/scalability_tests.md)
-* Support for 10 min graceful termination.
-* Improved eventing and monitoring.
-* Node allocatable support.
-* Removed Azure support. See: [PR removing support with reasoning behind this decision](https://github.com/kubernetes/autoscaler/pull/229)
-* cluster-autoscaler.kubernetes.io/scale-down-disabled` annotation for marking
-  nodes that should not be scaled down.
-* scale-down-delay-after-delete` and `scale-down-delay-after-failure` flags
-    replaced `scale-down-trial-interval`
-
-CA Version 0.6:
-* Allows scaling node groups to 0 (currently only in GCE/GKE, other cloud providers are coming). See: [How can I scale a node group to 0?](FAQ.md#how-can-i-scale-a-node-group-to-0)
-* Price-based expander (currently only in GCE/GKE, other cloud providers are coming). See: [What are Expanders?](FAQ.md#what-are-expanders)
-* Similar node groups are balanced (to be enabled with a flag). See: [I'm running cluster with nodes in multiple zones for HA purposes. Is that supported by Cluster Autoscaler?](FAQ.md#im-running-cluster-with-nodes-in-multiple-zones-for-ha-purposes-is-that-supported-by-cluster-autoscaler)
-* It is possible to scale-down nodes with kube-system pods if PodDisruptionBudget is provided. See: [How can I scale my cluster to just 1 node?](FAQ.md#how-can-i-scale-my-cluster-to-just-1-node)
-* Automatic node group discovery on AWS (to be enabled with a flag). See: [AWS doc](https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler/cloudprovider/aws).
-* CA exposes runtime metrics. See: [How can I monitor Cluster Autoscaler?](FAQ.md#how-can-i-monitor-cluster-autoscaler)
-* CA exposes an endpoint for liveness probe.
-* max-grateful-termination-sec flag renamed to max-graceful-termination-sec.
-* Lower AWS API traffic to DescribeAutoscalingGroup.
-
-CA Version 0.5.4:
-* Fixes problems with node drain when pods are ignoring SIGTERM.
-
-CA Version 0.5.3:
-* Fixes problems with pod anti-affinity in scale up https://github.com/kubernetes/autoscaler/issues/33.
-
-CA Version 0.5.2:
-* Fixes problems with pods using persistent volume claims in scale up https://github.com/kubernetes/contrib/issues/2507.
-
-CA Version 0.5.1:
-* Fixes problems with slow network route creations on cluster scale up https://github.com/kubernetes/kubernetes/issues/43709.
-
-CA Version 0.5:
-* CA continues to operate even if some nodes are unready and is able to scale-down them.
-* CA exports its status to kube-system/cluster-autoscaler-status config map.
-* CA respects PodDisruptionBudgets.
-* Azure support.
-* Alpha support for dynamic config changes.
-* Multiple expanders to decide which node group to scale up.
-
-CA Version 0.4:
-* Bulk empty node deletions.
-* Better scale-up estimator based on binpacking.
-* Improved logging.
-
-CA Version 0.3:
-* AWS support.
-* Performance improvements around scale down.
-
-# Deployment
-
-Cluster Autoscaler runs on the Kubernetes master node (at least in the default setup on GCE and GKE).
-It is possible to run customized Cluster Autoscaler inside of the cluster but then extra care needs
-to be taken to ensure that Cluster Autoscaler is up and running. User can put it into kube-system
-namespace (Cluster Autoscaler doesn't scale down node with non-manifest based kube-system pods running
-on them) and mark with `scheduler.alpha.kubernetes.io/critical-pod` annotation (so that the rescheduler,
-if enabled, will kill other pods to make space for it to run).
-
-Right now it is possible to run Cluster Autoscaler on:
-* GCE https://kubernetes.io/docs/concepts/cluster-administration/cluster-management/
-* GKE https://cloud.google.com/container-engine/docs/cluster-autoscaler
-* AWS https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/cloudprovider/aws/README.md
-* Azure https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/cloudprovider/azure/README.md
+#### k8s嵌入
+1. kubectl apply -f ca-sa.yaml  
+    创建CA的serverAccount
+    ```yaml
+    apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: cluster-autoscaler
+      namespace: default
+    ```
+2. kubectl apply -f ali-ca.yaml  
+    创建CA的deployment
+    ```yaml
+    apiVersion: extensions/v1beta1
+    kind: Deployment
+    metadata:
+      name: cluster-autoscaler
+      namespace: kube-system
+      labels:
+        app: cluster-autoscaler
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: cluster-autoscaler
+      template:
+        metadata:
+          labels:
+            app: cluster-autoscaler
+        spec:
+          containers:
+            - image: muttercai/cluster-autoscaler:v1.2
+              name: cluster-autoscaler
+              resources:
+                limits:
+                  cpu: 100m
+                  memory: 300Mi
+                requests:
+                  cpu: 100m
+                  memory: 300Mi
+              command:
+                - ./cluster-autoscaler
+                - --v=4
+                - --cloud-provider=ali
+                - --skip-nodes-with-local-storage=false
+                - --node-group-auto-discovery=asg:tag=cn-hongkong.kubernetes-hongkong-group,cn-hongkong.kubernetes-hongkong-group2
+              env:
+              - name: Region
+                value: cn-hongkong
+              - name: AccessKeyID
+                value: LTAITh6uSXRCv14k
+              - name: AccessKeySecret
+                value: zm4qbsuKnDQ3VRIxAQzFKvMt9aOBuI
+              imagePullPolicy: "Always"
+    ```
+    

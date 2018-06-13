@@ -263,9 +263,8 @@ func (m *asgCache) regenerate() error {
 	newInstanceToAsgCache := make(map[AliInstanceRef]*asg)
 	newAsgToInstancesCache := make(map[AliRef][]AliInstanceRef)
 	newScalingConfiguration := make(map[AliRef][]ess.ScalingConfiguration)
-	// 暂时不需要进行自动发现功能，阿里云的接口获取通过地域ID直接进行批量获取
 
-	// Build list of knowns ASG names
+	// 从提供的参数，获取对应的组名
 	refreshNames, err := m.buildAsgNames()
 	if err != nil {
 		return err
@@ -273,7 +272,7 @@ func (m *asgCache) regenerate() error {
 	// Fetch details of all ASGs
 	glog.V(4).Infof("Regenerating instance to ASG map for ASGs: %v", refreshNames)
 
-	// 通过地域ID获取ASGs的信息
+	// 通过组名获取ASGs的信息
 	groups, err := m.service.getAutoscalingGroupsByNames(refreshNames)
 	if err != nil {
 		return err
