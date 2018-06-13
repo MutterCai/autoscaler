@@ -3,7 +3,8 @@
 CA原本的MD文件改名成READMD_BACKUP.md
 
 * 协定：在阿里云上创建的伸缩组名称，必须以Region开头  
-例如香港的伸缩组(Region=cn-hongkong): cn-hongkong.kubernetes-hongkong-group
+例如香港的伸缩组(Region=cn-hongkong): cn-hongkong.kubernetes-hongkong-group  
+Region参考 https://help.aliyun.com/knowledge_detail/40654.html
 
 ## 调试
 

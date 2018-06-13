@@ -1,0 +1,41 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    app: cluster-autoscaler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cluster-autoscaler
+  template:
+    metadata:
+      labels:
+        app: cluster-autoscaler
+    spec:
+      containers:
+        - image: muttercai/cluster-autoscaler:v1.2
+          name: cluster-autoscaler
+          resources:
+            limits:
+              cpu: 100m
+              memory: 300Mi
+            requests:
+              cpu: 100m
+              memory: 300Mi
+          command:
+            - ./cluster-autoscaler
+            - --v=4
+            - --cloud-provider=ali
+            - --skip-nodes-with-local-storage=false
+            - --node-group-auto-discovery=asg:tag=cn-hongkong.kubernetes-hongkong-group,cn-hongkong.kubernetes-hongkong-group2
+          env:
+          - name: Region
+            value: cn-hongkong
+          - name: AccessKeyID
+            value: LTAITh6uSXRCv14k
+          - name: AccessKeySecret
+            value: zm4qbsuKnDQ3VRIxAQzFKvMt9aOBuI
+          imagePullPolicy: "Always"
