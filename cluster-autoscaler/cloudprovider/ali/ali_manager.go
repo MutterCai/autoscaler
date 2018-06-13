@@ -278,6 +278,10 @@ func (m *AliManager) getAsgTemplate(asg *asg) (*asgTemplate, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 判断实例列表是否拥有伸缩组的配置机型参数
+	if _, ok := InstanceTypes[cfg[0].InstanceType]; !ok {
+		return nil, fmt.Errorf("实例列表不存在：%s", cfg[0].InstanceType)
+	}
 	// TODO 这里获取的配置是一个数组，以第一个数据作为模板(被应用的配置，规则上也要求必须至少存在一个配置)
 	return &asgTemplate{
 		InstanceType: InstanceTypes[cfg[0].InstanceType],
