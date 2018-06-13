@@ -55,7 +55,7 @@ type AliManager struct {
 	service     autoScalingWrapper
 	asgCache    *asgCache
 	lastRefresh time.Time
-	activity 	*inScaling
+	lastActivity 	*inScaling
 }
 
 type asgTemplate struct {
@@ -121,7 +121,7 @@ func createAliManagerInternal(
 	manager := &AliManager{
 		service:  *service,
 		asgCache: cache,
-		activity: activity,
+		lastActivity: activity,
 	}
 
 	if err := manager.forceRefresh(); err != nil {
@@ -170,16 +170,16 @@ func (m *AliManager) getAsgs() []*asg {
 }
 
 func (m *AliManager) SetAsgSize(asg *asg, size int) error {
-	if len(m.activity.scalingActivityID) != 0 {
-		scalingActivity, err := m.service.getAutoscalingGroupActivities(m.activity.scalingGroupID, m.activity.scalingActivityID)
+	if len(m.lastActivity.scalingActivityID) != 0 {
+		scalingActivity, err := m.service.getAutoscalingGroupActivities(m.lastActivity.scalingGroupID, m.lastActivity.scalingActivityID)
 		if err != nil {
 			return err
 		}
 		if scalingActivity[0].StatusCode != "InProgress" {
-			m.activity.scalingActivityID = ""
-			m.activity.scalingGroupID = ""
+			m.lastActivity.scalingActivityID = ""
+			m.lastActivity.scalingGroupID = ""
 		}else{
-			return fmt.Errorf("有伸缩活动正在执行，取消本次请求...")
+			return fmt.Errorf("有伸缩活动正在执行，取消本次scale up...")
 		}
 	}
 	// TODO 在循环开始应该将所有的规则清空最好。
@@ -201,27 +201,16 @@ func (m *AliManager) SetAsgSize(asg *asg, size int) error {
 	if err != nil {
 		return err
 	}
-	m.activity.scalingActivityID = scalingActivityId
-	m.activity.scalingGroupID = asg.ScalingGroupItem.ScalingGroupId
+	m.lastActivity.scalingActivityID = scalingActivityId
+	m.lastActivity.scalingGroupID = asg.ScalingGroupItem.ScalingGroupId
+	asg.activity.scalingActivityID = scalingActivityId
+	asg.activity.scalingGroupID = asg.ScalingGroupItem.ScalingGroupId
 	return nil
 }
 
 // DeleteInstances deletes the given instances. All instances must be controlled by the same ASG.
 // TODO 阿里云支持批量删除，但是多次删除的支持不友好，必须等待上次请求执行完毕后才接收删除请求；CA流程上是以单个多次删除进行处理
 func (m *AliManager) DeleteInstances(instances []*AliInstanceRef) error {
-	if len(m.activity.scalingActivityID) != 0 {
-		scalingActivity, err := m.service.getAutoscalingGroupActivities(m.activity.scalingGroupID, m.activity.scalingActivityID)
-		if err != nil {
-			return err
-		}
-		// 不是处于InProgress状态，就是允许执行伸缩
-		if scalingActivity[0].StatusCode != "InProgress" {
-			m.activity.scalingActivityID = ""
-			m.activity.scalingGroupID = ""
-		}else{
-			return fmt.Errorf("有伸缩活动正在执行，取消本次请求...")
-		}
-	}
 	if len(instances) == 0 {
 		return nil
 	}
@@ -231,9 +220,24 @@ func (m *AliManager) DeleteInstances(instances []*AliInstanceRef) error {
 	}
 
 	instancesList := map[string][]string{}
+	asgs := map[string]*asg{}
 
 	for _, instance := range instances {
 		asg := m.asgCache.FindForInstance(*instance)
+
+		if len(asg.activity.scalingActivityID) != 0 {
+			scalingActivity, err := m.service.getAutoscalingGroupActivities(asg.activity.scalingGroupID, asg.activity.scalingActivityID)
+			if err != nil {
+				return err
+			}
+			// 不是处于InProgress状态，就是允许执行伸缩
+			if scalingActivity[0].StatusCode != "InProgress" {
+				asg.activity.scalingActivityID = ""
+				asg.activity.scalingGroupID = ""
+			}else{
+				return fmt.Errorf("%s有伸缩活动正在执行，取消本次scale down...", asg.ScalingGroupItem.ScalingGroupName)
+			}
+		}
 
 		if asg != commonAsg {
 			instanceIds := make([]string, len(instances))
@@ -245,16 +249,18 @@ func (m *AliManager) DeleteInstances(instances []*AliInstanceRef) error {
 		}
 		// 以autoscalingGroupID划分组
 		instancesList[asg.ScalingGroupItem.ScalingGroupId] = append(instancesList[asg.ScalingGroupItem.ScalingGroupId], instance.Name)
+		asgs[asg.ScalingGroupItem.ScalingGroupId] = asg
 	}
 	// 删掉实例，并且缩容
 	for autoscalingGroupID, instances := range instancesList {
-		scalingActivityId, err := m.service.removeInstances(autoscalingGroupID, instances)
+		scalingActivityID, err := m.service.removeInstances(autoscalingGroupID, instances)
 		if err != nil {
 			return err
 		}
-		m.activity.scalingActivityID = scalingActivityId
-		m.activity.scalingGroupID = autoscalingGroupID
-		glog.V(4).Infof("删除请求完毕。ASGID：%s，instances：%v。scalingActivityId：%s", autoscalingGroupID, instances,scalingActivityId)
+		m.lastActivity.scalingActivityID = scalingActivityID
+		m.lastActivity.scalingGroupID = autoscalingGroupID
+		asgs[autoscalingGroupID].activity.scalingActivityID = scalingActivityID
+		asgs[autoscalingGroupID].activity.scalingGroupID = autoscalingGroupID
 	}
 
 	return nil

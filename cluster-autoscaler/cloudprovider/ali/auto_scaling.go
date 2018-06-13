@@ -211,6 +211,16 @@ func (m *autoScalingWrapper) removeInstances(scalingGroupID string, instances []
 	return response.ScalingActivityId, nil
 }
 
+func (m *autoScalingWrapper) getAutoscalingGroupActivitiesByGroupID(scalingGroupID string) ([]ess.ScalingActivity, error) {
+	request := ess.CreateDescribeScalingActivitiesRequest()
+	request.ScalingGroupId = scalingGroupID
+	response, err := m.ess.DescribeScalingActivities(request)
+	if err != nil {
+		return nil, err
+	}
+	return response.ScalingActivities.ScalingActivity, nil
+}
+
 func (m *autoScalingWrapper) getAutoscalingGroupActivities(scalingGroupID string, scalingActivityID string) ([]ess.ScalingActivity, error) {
 	request := ess.CreateDescribeScalingActivitiesRequest()
 	request.ScalingGroupId = scalingGroupID
