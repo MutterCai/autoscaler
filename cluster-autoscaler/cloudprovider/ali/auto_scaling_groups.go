@@ -55,6 +55,7 @@ type asg struct {
 	ScalingGroupItem		ess.ScalingGroup
 	// 配置信息
 	ScalingConfiguration	[]ess.ScalingConfiguration
+	activity 				*inScaling
 	//AvailabilityZones       []string
 	//LaunchConfigurationName string
 	//Tags                    []*autoscaling.TagDescription
@@ -291,6 +292,16 @@ func (m *asgCache) regenerate() error {
 		// 注册asg(如果asg已经注册过，则会进行数据更新)
 		m.register(asg)
 
+		scalingActivity, err := m.service.getAutoscalingGroupActivitiesByGroupID(group.ScalingGroupId)
+		if err != nil {
+			return err
+		}
+		// 正在执行活动，刷新asg信息
+		if scalingActivity[0].StatusCode == "InProgress" {
+			asg.activity.scalingGroupID = group.ScalingGroupId
+			asg.activity.scalingActivityID = scalingActivity[0].ScalingActivityId
+		}
+
 		// 获取ASG的配置信息
 		configuration, err := m.service.getAutoscalingGroupConfigurationByGroupID(group.ScalingGroupId)
 		newScalingConfiguration[asg.AliRef] = configuration
@@ -341,6 +352,10 @@ func (m *asgCache) buildAsgFromAli(g ess.ScalingGroup) (*asg, error) {
 	if verr := spec.Validate(); verr != nil {
 		return nil, fmt.Errorf("failed to create node group spec: %v", verr)
 	}
+	activity := &inScaling{
+		scalingActivityID: "",
+		scalingGroupID: "",
+	}
 	asg := &asg{
 		AliRef:  AliRef{Name: spec.Name},
 		minSize: spec.MinSize,
@@ -352,6 +367,7 @@ func (m *asgCache) buildAsgFromAli(g ess.ScalingGroup) (*asg, error) {
 		//Tags: g.Tags,
 		// 增加扩展组的完整信息对象
 		ScalingGroupItem:	g,
+		activity: activity,
 	}
 	return asg, nil
 }
