@@ -45,12 +45,17 @@ const (
 	refreshInterval         = 10 * time.Second
 )
 
+type inScaling struct {
+	scalingActivityID		string
+	scalingGroupID		string
+}
 
 // AliManager is handles ali communication and data caching.
 type AliManager struct {
 	service     autoScalingWrapper
 	asgCache    *asgCache
 	lastRefresh time.Time
+	activity 	*inScaling
 }
 
 type asgTemplate struct {
@@ -109,10 +114,14 @@ func createAliManagerInternal(
 	if err != nil {
 		return nil, err
 	}
-
+	activity := &inScaling{
+		scalingActivityID: "",
+		scalingGroupID: "",
+	}
 	manager := &AliManager{
 		service:  *service,
 		asgCache: cache,
+		activity: activity,
 	}
 
 	if err := manager.forceRefresh(); err != nil {
@@ -161,6 +170,18 @@ func (m *AliManager) getAsgs() []*asg {
 }
 
 func (m *AliManager) SetAsgSize(asg *asg, size int) error {
+	if len(m.activity.scalingActivityID) != 0 {
+		scalingActivity, err := m.service.getAutoscalingGroupActivities(m.activity.scalingGroupID, m.activity.scalingActivityID)
+		if err != nil {
+			return err
+		}
+		if scalingActivity[0].StatusCode != "InProgress" {
+			m.activity.scalingActivityID = ""
+			m.activity.scalingGroupID = ""
+		}else{
+			return fmt.Errorf("有伸缩活动正在执行：%s，取消本次请求...", m.activity.scalingActivityID)
+		}
+	}
 	// TODO 在循环开始应该将所有的规则清空最好。
 	// 创建规则、应用、删除规则
 	glog.V(4).Infof("创建伸缩规则...")
@@ -176,16 +197,31 @@ func (m *AliManager) SetAsgSize(asg *asg, size int) error {
 	}
 	glog.V(0).Infof("伸缩规则应用：Setting asg %s size to %d", asg.Name, size)
 	// scalingActivityId 暂时用不上
-	_, err = m.service.executeAutoscalingRule(ruleResp.ScalingRuleAri)
+	scalingActivityId, err := m.service.executeAutoscalingRule(ruleResp.ScalingRuleAri)
 	if err != nil {
 		return err
 	}
+	m.activity.scalingActivityID = scalingActivityId
+	m.activity.scalingGroupID = asg.ScalingGroupItem.ScalingGroupId
 	return nil
 }
 
 // DeleteInstances deletes the given instances. All instances must be controlled by the same ASG.
 // TODO 阿里云支持批量删除，但是多次删除的支持不友好，必须等待上次请求执行完毕后才接收删除请求；CA流程上是以单个多次删除进行处理
 func (m *AliManager) DeleteInstances(instances []*AliInstanceRef) error {
+	if len(m.activity.scalingActivityID) != 0 {
+		scalingActivity, err := m.service.getAutoscalingGroupActivities(m.activity.scalingGroupID, m.activity.scalingActivityID)
+		if err != nil {
+			return err
+		}
+		// 不是处于InProgress状态，就是允许执行伸缩
+		if scalingActivity[0].StatusCode != "InProgress" {
+			m.activity.scalingActivityID = ""
+			m.activity.scalingGroupID = ""
+		}else{
+			return fmt.Errorf("有伸缩活动正在执行：%s，取消本次请求...", m.activity.scalingActivityID)
+		}
+	}
 	if len(instances) == 0 {
 		return nil
 	}
@@ -216,6 +252,8 @@ func (m *AliManager) DeleteInstances(instances []*AliInstanceRef) error {
 		if err != nil {
 			return err
 		}
+		m.activity.scalingActivityID = scalingActivityId
+		m.activity.scalingGroupID = autoscalingGroupID
 		glog.V(4).Infof("删除请求完毕。ASGID：%s，instances：%v。scalingActivityId：%s", autoscalingGroupID, instances,scalingActivityId)
 	}
 
