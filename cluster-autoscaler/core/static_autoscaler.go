@@ -234,7 +234,7 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 	// Check if there has been a constant difference between the number of nodes in k8s and
 	// the number of nodes on the cloud provider side.
 	// TODO: andrewskim - add protection for ready AWS nodes.
-	// 检查k8s中的节点数量与云提供者端的节点数量之间是否存在恒定差异。
+	// 检查k8s中的节点数量与cloud provider的节点数量之间是否存在恒定差异。
 	fixedSomething, err := fixNodeGroupSize(autoscalingContext, a.clusterStateRegistry, currentTime)
 	if err != nil {
 		glog.Errorf("Failed to fix node group sizes: %v", err)
@@ -389,7 +389,7 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 			"lastScaleDownDeleteTime=%v lastScaleDownFailTime=%s scaleDownForbidden=%v isDeleteInProgress=%v",
 			calculateUnneededOnly, a.lastScaleUpTime, a.lastScaleDownDeleteTime, a.lastScaleDownFailTime,
 			scaleDownForbidden, scaleDown.nodeDeleteStatus.IsDeleteInProgress())
-		// 可所容判断
+		// 是否可scale down判断
 		if !calculateUnneededOnly {
 			glog.V(4).Infof("Starting scale down")
 

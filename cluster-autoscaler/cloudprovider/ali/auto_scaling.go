@@ -20,7 +20,6 @@ import (
 	//"fmt"
 	//"github.com/golang/glog"
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/ess"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
 	//provider_ali "github.com/AliyunContainerService/alicloud-controller-manager/alicloud"
 	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
 	"fmt"
@@ -49,7 +48,6 @@ type CloudConfig struct {
 // autoScalingWrapper 根据sdk封装一层接口，负责与阿里云的通讯
 type autoScalingWrapper struct {
 	ess ess.Client
-	ecs ecs.Client
 	cfg CloudConfig
 }
 
@@ -179,19 +177,6 @@ func (m *autoScalingWrapper) getAutoscalingGroupConfigurationByGroupID(scalingGr
 	return response.ScalingConfigurations.ScalingConfiguration, nil
 }
 
-func (m *autoScalingWrapper) createInstance(configuration ess.ScalingConfiguration) (string, error) {
-	reqCI := ecs.CreateCreateInstanceRequest()
-	reqCI.RegionId = m.cfg.Global.Region
-	reqCI.ImageId = configuration.ImageId
-	reqCI.InstanceType = configuration.InstanceType
-	reqCI.SecurityGroupId = configuration.SecurityGroupId
-	respCI, err := m.ecs.CreateInstance(reqCI)
-	if err != nil {
-		return "", err
-	}
-	return respCI.InstanceId, nil
-}
-
 // 删除实例
 func (m *autoScalingWrapper) removeInstances(scalingGroupID string, instances []string) (string, error) {
 	request := ess.CreateRemoveInstancesRequest()
@@ -211,23 +196,3 @@ func (m *autoScalingWrapper) removeInstances(scalingGroupID string, instances []
 	return response.ScalingActivityId, nil
 }
 
-func (m *autoScalingWrapper) getAutoscalingGroupActivitiesByGroupID(scalingGroupID string) ([]ess.ScalingActivity, error) {
-	request := ess.CreateDescribeScalingActivitiesRequest()
-	request.ScalingGroupId = scalingGroupID
-	response, err := m.ess.DescribeScalingActivities(request)
-	if err != nil {
-		return nil, err
-	}
-	return response.ScalingActivities.ScalingActivity, nil
-}
-
-func (m *autoScalingWrapper) getAutoscalingGroupActivities(scalingGroupID string, scalingActivityID string) ([]ess.ScalingActivity, error) {
-	request := ess.CreateDescribeScalingActivitiesRequest()
-	request.ScalingGroupId = scalingGroupID
-	request.ScalingActivityId1 = scalingActivityID
-	response, err := m.ess.DescribeScalingActivities(request)
-	if err != nil {
-		return nil, err
-	}
-	return response.ScalingActivities.ScalingActivity, nil
-}
