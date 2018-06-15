@@ -139,7 +139,14 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 	if a.actOnEmptyCluster(allNodes, readyNodes, currentTime) {
 		return nil
 	}
-
+	if a.CloudProviderName == "ali" {
+		for _, node := range allNodes {
+			a.CloudProvider.NodeGroupForNode(node)
+		}
+		for _, node := range readyNodes {
+			a.CloudProvider.NodeGroupForNode(node)
+		}
+	}
 	typedErr = a.updateClusterState(allNodes, currentTime)
 	if typedErr != nil {
 		return typedErr
