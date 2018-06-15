@@ -82,7 +82,8 @@ func (ali *aliCloudProvider) NodeGroups() []cloudprovider.NodeGroup {
 func (ali *aliCloudProvider) NodeGroupForNode(node *apiv1.Node) (cloudprovider.NodeGroup, error) {
 	// TODO set ali cloud provider_id
 	if len(node.Spec.ProviderID) == 0 {
-		node.Spec.ProviderID = "cn-hongkong." + node.Name
+		glog.V(0).Infof("%s 不存在ProviderID，进行补充", node.Name)
+		node.Spec.ProviderID = ali.aliManager.asgCache.service.cfg.Global.Region + "." + node.Name
 	}
 
 	ref, err := AliRefFromProviderId(node.Spec.ProviderID)

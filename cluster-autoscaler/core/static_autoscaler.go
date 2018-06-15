@@ -35,7 +35,6 @@ import (
 	kube_record "k8s.io/client-go/tools/record"
 
 	"github.com/golang/glog"
-	"strings"
 )
 
 const (
@@ -136,47 +135,7 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 	if typedErr != nil {
 		return typedErr
 	}
-	if a.CloudProvider.Name() == "ali" {
-		for i := 0; i < len(allNodes); i++ {
-			if len(allNodes[i].Spec.ProviderID) == 0 {
-				aliNodeGroup, err := a.CloudProvider.NodeGroupForNode(allNodes[i])
-				if err != nil {
-					return errors.ToAutoscalerError(errors.CloudProviderError, err)
-				}
-				// master没有扩展组
-				if aliNodeGroup == nil {
-					continue
-				}
-				region := strings.Split(aliNodeGroup.Id(), ".")
-				if len(region) > 0 {
-					allNodes[i].Spec.ProviderID = region[0] + "." + allNodes[i].Name
-				} else {
-					glog.V(0).Infof("获取区域信息失败。")
-					allNodes[i].Spec.ProviderID = "cn-hongkong." + allNodes[i].Name
-				}
-			}
 
-		}
-		for i := 0; i < len(readyNodes); i++ {
-			if len(allNodes[i].Spec.ProviderID) == 0 {
-				aliNodeGroup, err := a.CloudProvider.NodeGroupForNode(allNodes[i])
-				if err != nil {
-					return errors.ToAutoscalerError(errors.CloudProviderError, err)
-				}
-				// master没有扩展组
-				if aliNodeGroup == nil {
-					continue
-				}
-				region := strings.Split(aliNodeGroup.Id(), ".")
-				if len(region) > 0 {
-					allNodes[i].Spec.ProviderID = region[0] + allNodes[i].Name
-				} else {
-					glog.V(0).Infof("获取区域信息失败。")
-					allNodes[i].Spec.ProviderID = "cn-hongkong" + allNodes[i].Name
-				}
-			}
-		}
-	}
 	if a.actOnEmptyCluster(allNodes, readyNodes, currentTime) {
 		return nil
 	}

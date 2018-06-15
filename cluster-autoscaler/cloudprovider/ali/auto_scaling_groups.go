@@ -122,6 +122,7 @@ func (m *asgCache) register(asg *asg) bool {
 			//existing.LaunchConfigurationName = asg.LaunchConfigurationName
 			//existing.Tags = asg.Tags
 			existing.ScalingGroupItem = asg.ScalingGroupItem
+			existing.activity = asg.activity
 			return true
 		}
 	}
@@ -287,20 +288,14 @@ func (m *asgCache) regenerate() error {
 		if err != nil {
 			return err
 		}
+		// 执行状态
+		asg.activity.PendingCapacity = group.PendingCapacity
+		asg.activity.RemovingCapacity = group.RemovingCapacity
+
 		// 标注API列表存在该ASG
 		exists[asg.AliRef] = true
 		// 注册asg(如果asg已经注册过，则会进行数据更新)
 		m.register(asg)
-
-		scalingActivity, err := m.service.getAutoscalingGroupActivitiesByGroupID(group.ScalingGroupId)
-		if err != nil {
-			return err
-		}
-		// 正在执行活动，刷新asg信息
-		if scalingActivity[0].StatusCode == "InProgress" {
-			asg.activity.scalingGroupID = group.ScalingGroupId
-			asg.activity.scalingActivityID = scalingActivity[0].ScalingActivityId
-		}
 
 		// 获取ASG的配置信息
 		configuration, err := m.service.getAutoscalingGroupConfigurationByGroupID(group.ScalingGroupId)
@@ -353,8 +348,8 @@ func (m *asgCache) buildAsgFromAli(g ess.ScalingGroup) (*asg, error) {
 		return nil, fmt.Errorf("failed to create node group spec: %v", verr)
 	}
 	activity := &inScaling{
-		scalingActivityID: "",
-		scalingGroupID: "",
+		PendingCapacity: 0,
+		RemovingCapacity: 0,
 	}
 	asg := &asg{
 		AliRef:  AliRef{Name: spec.Name},

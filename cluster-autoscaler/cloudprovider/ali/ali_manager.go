@@ -33,7 +33,6 @@ import (
 	kubeletapis "k8s.io/kubernetes/pkg/kubelet/apis"
 	//provider_ali "github.com/AliyunContainerService/alicloud-controller-manager/alicloud"
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/ess"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
 	"github.com/aws/aws-sdk-go/service/autoscaling"
 	"os"
 )
@@ -46,8 +45,8 @@ const (
 )
 
 type inScaling struct {
-	scalingActivityID		string
-	scalingGroupID		string
+	PendingCapacity		int
+	RemovingCapacity	int
 }
 
 // AliManager is handles ali communication and data caching.
@@ -55,7 +54,6 @@ type AliManager struct {
 	service     autoScalingWrapper
 	asgCache    *asgCache
 	lastRefresh time.Time
-	lastActivity 	*inScaling
 }
 
 type asgTemplate struct {
@@ -89,18 +87,9 @@ func createAliManagerInternal(
 		if err != nil {
 			return nil, err
 		}
-		// ecs的API实例
-		ecsClient, err := ecs.NewClientWithAccessKey(
-			cfg.Global.Region,
-			cfg.Global.AccessKeyID,
-			cfg.Global.AccessKeySecret)
-		if err != nil {
-			return nil, err
-		}
 
 		service = &autoScalingWrapper{
 			ess: *essClient,
-			ecs: *ecsClient,
 			cfg: cfg,
 		}
 	}
@@ -114,14 +103,9 @@ func createAliManagerInternal(
 	if err != nil {
 		return nil, err
 	}
-	activity := &inScaling{
-		scalingActivityID: "",
-		scalingGroupID: "",
-	}
 	manager := &AliManager{
 		service:  *service,
 		asgCache: cache,
-		lastActivity: activity,
 	}
 
 	if err := manager.forceRefresh(); err != nil {
@@ -170,19 +154,15 @@ func (m *AliManager) getAsgs() []*asg {
 }
 
 func (m *AliManager) SetAsgSize(asg *asg, size int) error {
-	if len(m.lastActivity.scalingActivityID) != 0 {
-		scalingActivity, err := m.service.getAutoscalingGroupActivities(m.lastActivity.scalingGroupID, m.lastActivity.scalingActivityID)
-		if err != nil {
-			return err
-		}
-		if scalingActivity[0].StatusCode != "InProgress" {
-			m.lastActivity.scalingActivityID = ""
-			m.lastActivity.scalingGroupID = ""
-		}else{
-			return fmt.Errorf("有伸缩活动正在执行，取消本次scale up...")
+	if asg.activity.PendingCapacity > 0 || asg.activity.RemovingCapacity > 0 {
+		return fmt.Errorf("有伸缩活动正在执行，取消本次scale up...")
+	}
+	// 检测其他组有没有执行扩展(防止重复扩展)
+	for _, _asg := range m.asgCache.registeredAsgs {
+		if _asg.activity.PendingCapacity > 0 {
+			return fmt.Errorf("其他组正在扩展，取消本次scale up...")
 		}
 	}
-	// TODO 在循环开始应该将所有的规则清空最好。
 	// 创建规则、应用、删除规则
 	glog.V(0).Infof("创建伸缩规则...")
 	ruleResp, err := m.service.createAutoscalingRule(asg.ScalingGroupItem.ScalingGroupId, size)
@@ -197,14 +177,10 @@ func (m *AliManager) SetAsgSize(asg *asg, size int) error {
 	}
 	glog.V(0).Infof("伸缩规则应用：Setting asg %s size to %d", asg.Name, size)
 	// scalingActivityId 暂时用不上
-	scalingActivityId, err := m.service.executeAutoscalingRule(ruleResp.ScalingRuleAri)
+	_, err = m.service.executeAutoscalingRule(ruleResp.ScalingRuleAri)
 	if err != nil {
 		return err
 	}
-	m.lastActivity.scalingActivityID = scalingActivityId
-	m.lastActivity.scalingGroupID = asg.ScalingGroupItem.ScalingGroupId
-	asg.activity.scalingActivityID = scalingActivityId
-	asg.activity.scalingGroupID = asg.ScalingGroupItem.ScalingGroupId
 	return nil
 }
 
@@ -224,21 +200,9 @@ func (m *AliManager) DeleteInstances(instances []*AliInstanceRef) error {
 
 	for _, instance := range instances {
 		asg := m.asgCache.FindForInstance(*instance)
-
-		if len(asg.activity.scalingActivityID) != 0 {
-			scalingActivity, err := m.service.getAutoscalingGroupActivities(asg.activity.scalingGroupID, asg.activity.scalingActivityID)
-			if err != nil {
-				return err
-			}
-			// 不是处于InProgress状态，就是允许执行伸缩
-			if scalingActivity[0].StatusCode != "InProgress" {
-				asg.activity.scalingActivityID = ""
-				asg.activity.scalingGroupID = ""
-			}else{
-				return fmt.Errorf("%s有伸缩活动正在执行，取消本次scale down...", asg.ScalingGroupItem.ScalingGroupName)
-			}
+		if asg.activity.PendingCapacity > 0 || asg.activity.RemovingCapacity > 0 {
+			return fmt.Errorf("%s有伸缩活动正在执行，取消本次scale down...", asg.ScalingGroupItem.ScalingGroupName)
 		}
-
 		if asg != commonAsg {
 			instanceIds := make([]string, len(instances))
 			for i, instance := range instances {
@@ -253,14 +217,10 @@ func (m *AliManager) DeleteInstances(instances []*AliInstanceRef) error {
 	}
 	// 删掉实例，并且缩容
 	for autoscalingGroupID, instances := range instancesList {
-		scalingActivityID, err := m.service.removeInstances(autoscalingGroupID, instances)
+		_, err := m.service.removeInstances(autoscalingGroupID, instances)
 		if err != nil {
 			return err
 		}
-		m.lastActivity.scalingActivityID = scalingActivityID
-		m.lastActivity.scalingGroupID = autoscalingGroupID
-		asgs[autoscalingGroupID].activity.scalingActivityID = scalingActivityID
-		asgs[autoscalingGroupID].activity.scalingGroupID = autoscalingGroupID
 	}
 
 	return nil
