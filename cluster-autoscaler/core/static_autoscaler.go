@@ -140,6 +140,15 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 	if a.actOnEmptyCluster(allNodes, readyNodes, currentTime) {
 		return nil
 	}
+	// 阿里云的providerID补充
+	if a.CloudProviderName == "ali" {
+		for _, node := range allNodes {
+			a.CloudProvider.NodeGroupForNode(node)
+		}
+		for _, node := range readyNodes {
+			a.CloudProvider.NodeGroupForNode(node)
+		}
+	}
 	// 更新集群状态
 	typedErr = a.updateClusterState(allNodes, currentTime)
 	if typedErr != nil {
